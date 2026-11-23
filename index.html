@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=6">
+  <link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
 
@@ -48,6 +48,22 @@
 
     <!-- RESUMO -->
     <section class="view" id="view-dashboard">
+      <div class="card conselheiro">
+        <div class="cons-head">
+          <img id="cons-avatar" class="avatar" src="https://github.com/zazzouneto.png?size=160" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar avatar-fallback',textContent:'N'}))">
+          <div class="cons-titulo">
+            <strong id="cons-saudacao">Olá!</strong>
+            <span class="muted small" id="cons-sub">O seu conselheiro financeiro</span>
+          </div>
+          <span class="cons-score" id="cons-score" title="Saúde financeira do mês">—</span>
+        </div>
+        <ul class="cons-lista" id="cons-lista"></ul>
+        <div class="cons-dica" id="cons-dica"></div>
+        <div class="btn-row cons-acoes">
+          <button class="btn btn-sm" id="cons-mais">Ver mais</button>
+          <button class="btn btn-sm btn-primary" id="cons-claude" title="Abre o Claude com o resumo do seu mês">💬 Conversar com o conselheiro</button>
+        </div>
+      </div>
       <div id="aviso-backup" class="aviso" hidden></div>
       <div class="grid-hoje">
         <div class="card saldo-real-card">
@@ -239,6 +255,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

@@ -106,6 +106,7 @@ async function atualizarCambio(manual = false) {
     const j = await r.json();
     const v = Number(j?.EURBRL?.bid);
     if (!(v > 0)) throw new Error("resposta inválida");
+    if (state.config.cambio?.valor && Math.round(v * 10000) / 10000 !== state.config.cambio.valor) state.config.cambioAnterior = { ...state.config.cambio };
     state.config.cambio = { valor: Math.round(v * 10000) / 10000, data: j.EURBRL.create_date || hojeISO(), fonte: "AwesomeAPI" };
     const n = aplicarCambio();
     salvar(); render();
@@ -324,12 +325,8 @@ function renderDashboard() {
   const conf = pendentesAte(lim);
   $("dash-confirmar").innerHTML = conf.length ? conf.map(t => itemMov(t, hoje)).join("") : `<li class="empty" style="display:block">Nada pendente para os próximos 7 dias. 🎉</li>`;
 
-  // Aviso de cópia de segurança
-  const ub = state.config.ultimoBackup;
-  const dias = ub ? Math.floor((Date.parse(hoje) - Date.parse(ub)) / 864e5) : null;
-  const av = $("aviso-backup");
-  av.hidden = !(dias === null || dias >= 14);
-  av.innerHTML = `<span>💾 ${dias === null ? "Ainda não fez nenhuma cópia de segurança." : `Última cópia de segurança há ${dias} dias.`} Os dados só existem neste navegador.</span><button class="btn btn-sm" data-backup>Exportar agora</button>`;
+  $("aviso-backup").hidden = true;
+  renderConselheiro();
 
   graficoBarras($("chart-barras"));
   graficoDonut($("chart-donut"));
@@ -360,6 +357,153 @@ function itemMov(t, hoje) {
     <span>${esc(t.descricao)}<span class="cat">${esc(t.categoria)}${atras ? " · atrasado" : ""}${t.pago ? ` · ${rec ? "recebido" : "pago"} ${dataCurta(t.pagoEm).slice(0, 5)}` : ""}</span></span>
     <span class="v ${rec ? "pos" : "neg"}">${rec ? "+" : "−"}${fmt(t.valor)}</span>
     <button class="chk ${t.pago ? "on" : ""}" data-confirmar="${esc(t.id)}" title="${t.pago ? "Desfazer confirmação" : rec ? "Confirmar recebimento" : "Confirmar pagamento"}">✓</button></li>`;
+}
+
+/* ---------- Conselheiro: insights do dia ---------- */
+const DICAS = [
+  "Faça a lista do mercado <strong>antes</strong> de sair de casa e não entre com fome — corta compras por impulso.",
+  "Antes de qualquer compra acima de €30 que não estava prevista, <strong>espere 48 horas</strong>.",
+  "Marcas brancas no Lidl/Aldi/Continente costumam ser <strong>20–40% mais baratas</strong> para a mesma qualidade.",
+  "Cozinhe em quantidade ao domingo: <strong>marmitas</strong> para a semana poupam tempo e dinheiro.",
+  "Ligue a máquina de lavar e o forno no horário mais barato da tarifa, se for bi-horária.",
+  "Pergunte à MEO por uma <strong>proposta de retenção</strong> — muitas vezes baixam o preço só por pedir.",
+  "Verifique se tem direito à <strong>tarifa social de energia</strong>: pode baixar bastante a conta da luz.",
+  "Wizink e Oney guardados na gaveta: <strong>nenhuma compra nova</strong> até estarem a zero.",
+  "Fim de semana sem gastar: parque, praia fluvial, cinema em casa com pipocas feitas em casa.",
+  "Cada €10 que sobrar vai para a reserva — até chegar a <strong>€300</strong>, depois para o limite Itaú.",
+  "Junte as saídas de carro: um percurso planeado gasta muito menos combustível do que três voltas.",
+  "Peça faturas com NIF em tudo: farmácia, escola, mercado — conta para o <strong>IRS</strong>.",
+  "Pague primeiro as dívidas no dia 1, depois o resto: <strong>pagar-se a si e ao plano primeiro</strong>.",
+  "Uma meta de vendas de velas por mês, mesmo pequena, cria a folga que o plano não tem.",
+  "Revise as subscrições (streaming, apps, ginásio): cancele o que não usou no último mês.",
+];
+
+function calcularInsights() {
+  const hoje = hojeISO(), amanha = somarDias(hoje, 1), mesH = mesDe(hoje);
+  const ins = []; // { p: prioridade (maior = mais importante), tom: alto|medio|bom|info, ic, txt, acao }
+  const add = (p, tom, ic, txt, acao = "") => ins.push({ p, tom, ic, txt, acao });
+  const btnConf = (t) => `<button class="btn btn-sm" data-confirmar="${esc(t.id)}">${t.tipo === "receita" ? "Recebido ✓" : "Pago ✓"}</button>`;
+
+  // 1) Saldo real
+  if (!temSaldoReal()) add(100, "medio", "🏦", "Comece por dizer quanto tem hoje na conta. A partir daí eu vou acompanhando cada pagamento.", `<button class="btn btn-sm btn-primary" data-acao-cons="saldo">Atualizar saldo</button>`);
+  else {
+    const dias = Math.floor((Date.now() - Date.parse(state.config.saldoReal.data)) / 864e5);
+    if (dias >= 7) add(55, "info", "🔄", `O saldo real foi atualizado há ${dias} dias. Confira com o banco para eu não me enganar.`, `<button class="btn btn-sm" data-acao-cons="saldo">Atualizar</button>`);
+  }
+
+  // 2) Atrasados
+  const atras = pendentesAte(somarDias(hoje, -1));
+  const atrDesp = atras.filter(t => t.tipo === "despesa"), atrRec = atras.filter(t => t.tipo === "receita");
+  if (atrDesp.length) {
+    const tot = atrDesp.reduce((a, t) => a + t.valor, 0);
+    add(95, "alto", "⏰", atrDesp.length === 1 ? `<strong>${esc(atrDesp[0].descricao)}</strong> (${fmt(atrDesp[0].valor)}) venceu a ${dataCurta(dataVenc(atrDesp[0])).slice(0, 5)} e ainda não está confirmado. Já pagou?`
+      : `Tem <strong>${atrDesp.length} pagamentos atrasados</strong> (${fmt(tot)}). Confirme os que já pagou para o saldo bater certo.`, atrDesp.length === 1 ? btnConf(atrDesp[0]) : `<button class="btn btn-sm" data-goto-pend>Ver</button>`);
+  }
+  if (atrRec.length) add(80, "medio", "💶", `${atrRec.length === 1 ? `<strong>${esc(atrRec[0].descricao)}</strong> (${fmt(atrRec[0].valor)}) devia ter entrado` : `${atrRec.length} recebimentos deviam ter entrado`}. Já caiu na conta?`, atrRec.length === 1 ? btnConf(atrRec[0]) : "");
+
+  // 3) Hoje e amanhã
+  const hojeL = state.transacoes.filter(t => !t.pago && dataVenc(t) === hoje);
+  hojeL.slice(0, 2).forEach(t => add(90, t.tipo === "receita" ? "bom" : "medio", t.tipo === "receita" ? "💰" : "📅", `Hoje: ${t.tipo === "receita" ? "recebe" : "paga"} <strong>${esc(t.descricao)}</strong> — ${fmt(t.valor)}.`, btnConf(t)));
+  const amL = state.transacoes.filter(t => !t.pago && dataVenc(t) === amanha);
+  if (amL.length) add(70, "info", "🔔", `Amanhã: ${amL.slice(0, 3).map(t => `${esc(t.descricao)} ${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}`).join(", ")}${amL.length > 3 ? "…" : ""}.`);
+
+  // 4) Saldo previsto do mês e próximos meses
+  if (temSaldoReal()) {
+    const fim = saldoPrevisto(fimDoMes(mesH));
+    if (fim < 0) {
+      const varCat = ["Contas Casa", "Transporte"].map(c => [c, soma(doMes(mesH).filter(t => t.categoria === c && !t.pago), "despesa")]).sort((a, b) => b[1] - a[1])[0];
+      add(92, "alto", "🚨", `Pelo plano, este mês fecha em <strong class="neg">${fmt(fim)}</strong>. Faltam ${fmt(-fim)} — ${varCat && varCat[1] ? `o mais fácil de cortar é ${esc(varCat[0])} (${fmt(varCat[1])} ainda por gastar)` : "adie uma despesa não essencial"}.`);
+    } else if (fim < 100) add(60, "medio", "⚖️", `Este mês fecha com <strong>${fmt(fim)}</strong> de folga. Apertado: qualquer gasto extra tem de sair de outro lado.`);
+    else add(40, "bom", "✅", `Este mês deve fechar com <strong class="pos">${fmt(fim)}</strong>. Se sobrar, ponha na reserva.`);
+    for (let i = 1; i <= 6; i++) {
+      const ym = somarMeses(mesH, i), v = saldoPrevisto(fimDoMes(ym));
+      if (v < 0) { add(75, "medio", "📉", `Atenção a <strong>${nomeMes(ym)}</strong>: o saldo previsto fica em ${fmt(v)}. Ainda dá tempo de ajustar.`); break; }
+    }
+  }
+
+  // 5) Orçamento (gastos confirmados vs limite)
+  state.orcamentos.filter(o => o.limite > 0).forEach(o => {
+    const gasto = doMes(mesH).filter(t => t.tipo === "despesa" && t.categoria === o.categoria && t.pago).reduce((a, t) => a + t.valor, 0);
+    const pct = gasto / o.limite;
+    if (pct > 1) add(85, "alto", "🛑", `<strong>${esc(o.categoria)}</strong> já passou o limite: ${fmt(gasto)} de ${fmt(o.limite)}.`);
+    else if (pct >= 0.85) add(65, "medio", "⚠️", `<strong>${esc(o.categoria)}</strong> está em ${Math.round(pct * 100)}% do limite (${fmt(gasto)} de ${fmt(o.limite)}).`);
+  });
+
+  // 6) Dívidas e metas
+  state.metas.filter(m => m.alvo > 0).forEach(m => {
+    const p = progressoMeta(m), pct = p.atual / m.alvo, F = (v) => fmtMoeda(v, m.moeda);
+    if (pct >= 1) add(50, "bom", "🏆", `<strong>${esc(m.nome)}</strong>: QUITADO! Parabéns — essa parcela agora pode ir para a próxima dívida.`);
+    else if (p.quitacao) {
+      const meses = (Number(p.quitacao.slice(0, 4)) - Number(hoje.slice(0, 4))) * 12 + Number(p.quitacao.slice(5, 7)) - Number(hoje.slice(5, 7));
+      if (meses <= 2) add(58, "bom", "🎯", `<strong>${esc(m.nome)}</strong> fica quitado ${meses <= 0 ? "este mês" : `em ${meses} ${meses === 1 ? "mês" : "meses"}`}! Força, falta pouco (${F(m.alvo - p.atual)}).`);
+    }
+  });
+  const prox = state.metas.filter(m => m.alvo > 0 && progressoMeta(m).quitacao).map(m => [m, progressoMeta(m).quitacao]).sort((a, b) => a[1].localeCompare(b[1]))[0];
+  if (prox) add(35, "info", "🧭", `Próxima dívida a acabar: <strong>${esc(prox[0].nome)}</strong> em ${nomeMes(mesDe(prox[1]))}.`);
+
+  // 7) Próximo salário
+  const sal = state.transacoes.filter(t => t.tipo === "receita" && !t.pago && dataVenc(t) >= hoje && /sal[áa]rio/i.test(t.descricao)).sort((a, b) => dataVenc(a).localeCompare(dataVenc(b)))[0];
+  if (sal && dataVenc(sal) !== hoje) {
+    const d = Math.round((Date.parse(dataVenc(sal)) - Date.parse(hoje)) / 864e5);
+    if (d <= 10) add(30, "info", "📆", `Faltam <strong>${d} ${d === 1 ? "dia" : "dias"}</strong> para o ${esc(sal.descricao)} (${sal.valorBRL ? fmtBRL(sal.valorBRL) + " ≈ " : ""}${fmt(sal.valor)}).`);
+  }
+
+  // 8) Câmbio
+  const cAnt = Number(state.config.cambioAnterior?.valor), cAt = cambio();
+  if (cAnt && Math.abs(cAt - cAnt) / cAnt >= 0.01) {
+    const salBRL = state.transacoes.filter(t => t.valorBRL && t.tipo === "receita" && mesDe(t.data) === mesH).reduce((a, t) => a + t.valorBRL, 0);
+    const dif = salBRL ? salBRL / cAnt - salBRL / cAt : 0;
+    add(45, cAt > cAnt ? "medio" : "bom", "💱", `O euro está a ${fmtTaxa(cAt)} (antes ${fmtTaxa(cAnt)}). ${salBRL ? `O que recebe em reais rende <strong>${fmt(Math.abs(dif))} ${dif > 0 ? "a menos" : "a mais"}</strong> este mês.` : ""}`);
+  }
+
+  // 9) Cópia de segurança
+  const ub = state.config.ultimoBackup, dB = ub ? Math.floor((Date.parse(hoje) - Date.parse(ub)) / 864e5) : null;
+  if (dB === null || dB >= 14) add(dB === null ? 68 : 52, "medio", "💾", `${dB === null ? "Ainda não fez nenhuma cópia de segurança" : `Última cópia de segurança há ${dB} dias`}. Sem o Excel, este app é o seu único registo.`, `<button class="btn btn-sm" data-backup>Exportar</button>`);
+
+  ins.sort((a, b) => b.p - a.p);
+  // nota de saúde
+  const altos = ins.filter(i => i.tom === "alto").length, medios = ins.filter(i => i.tom === "medio").length;
+  const score = altos ? ["critico", "Precisa de atenção"] : medios >= 2 ? ["atencao", "Apertado mas no plano"] : ["bom", "No caminho certo"];
+  return { ins, score };
+}
+
+let consMostrarTodos = false;
+function renderConselheiro() {
+  const h = new Date().getHours();
+  const nome = (JSON.parse(localStorage.getItem(USER_KEY) || "{}").nome) || "Neto";
+  $("cons-saudacao").textContent = `${h < 12 ? "Bom dia" : h < 19 ? "Boa tarde" : "Boa noite"}, ${nome}!`;
+  $("cons-sub").textContent = new Date().toLocaleDateString("pt-PT", { weekday: "long", day: "numeric", month: "long" });
+  const { ins, score } = calcularInsights();
+  const sc = $("cons-score"); sc.className = "cons-score " + score[0]; sc.textContent = score[1];
+  const lista = consMostrarTodos ? ins : ins.slice(0, 4);
+  $("cons-lista").innerHTML = lista.map(i => `<li class="${i.tom}"><span class="ic">${i.ic}</span><span>${i.txt}</span>${i.acao ? `<span class="acao">${i.acao}</span>` : ""}</li>`).join("")
+    || `<li class="bom"><span class="ic">🌱</span><span>Tudo em dia. Bom trabalho!</span></li>`;
+  $("cons-mais").hidden = ins.length <= 4;
+  $("cons-mais").textContent = consMostrarTodos ? "Ver menos" : `Ver mais (${ins.length - 4})`;
+  const doy = Math.floor((Date.parse(hojeISO()) - Date.parse(hojeISO().slice(0, 4) + "-01-01")) / 864e5);
+  $("cons-dica").innerHTML = `💡 <strong>Dica do dia:</strong> ${DICAS[doy % DICAS.length]}`;
+}
+
+// Resumo do mês em texto, para conversar com o conselheiro no Claude
+function resumoParaClaude() {
+  const hoje = hojeISO(), mesH = mesDe(hoje), l = doMes(mesH);
+  const linhas = [`Conselheiro financeiro da família: rever o meu mês (${nomeMes(mesH)}). Dados do app Finanças Família em ${dataCurta(hoje)}:`];
+  linhas.push(`- Saldo real: ${temSaldoReal() ? fmt(state.config.saldoReal.valor) : "não definido"}; saldo previsto no fim do mês: ${fmt(saldoPrevisto(fimDoMes(mesH)))}`);
+  linhas.push(`- Receitas do mês: ${fmt(soma(l, "receita"))} (recebido ${fmt(soma(l.filter(t => t.pago), "receita"))}); despesas: ${fmt(soma(l, "despesa"))} (pago ${fmt(soma(l.filter(t => t.pago), "despesa"))})`);
+  const pend = pendentesAte(fimDoMes(mesH));
+  if (pend.length) linhas.push(`- Pendentes até ao fim do mês: ${pend.map(t => `${dataCurta(dataVenc(t)).slice(0, 5)} ${t.descricao} ${t.tipo === "receita" ? "+" : "-"}${fmt(t.valor)}`).join("; ")}`);
+  const prox = [1, 2, 3].map(i => somarMeses(mesH, i)).map(ym => `${nomeMes(ym)} ${fmt(saldoPrevisto(fimDoMes(ym)))}`).join("; ");
+  linhas.push(`- Saldo previsto nos próximos meses: ${prox}`);
+  state.metas.forEach(m => { const p = progressoMeta(m); linhas.push(`- ${m.nome}: pago ${fmtMoeda(p.atual, m.moeda)} de ${fmtMoeda(m.alvo, m.moeda)}${p.quitacao ? `, quitação prevista ${nomeMes(mesDe(p.quitacao))}` : ""}`); });
+  linhas.push(`- Câmbio: 1 € = ${fmtTaxa(cambio())}`);
+  linhas.push("O que devo fazer esta semana para manter o plano e fechar 2027 no verde?");
+  return linhas.join("\n");
+}
+async function conversarComConselheiro() {
+  const txt = resumoParaClaude();
+  try { await navigator.clipboard.writeText(txt); } catch (e) { /* sem permissão: segue só com o link */ }
+  window.open("https://claude.ai/new?q=" + encodeURIComponent(txt), "_blank", "noopener");
+  toast("Resumo copiado. Se o Claude abrir vazio, cole (Ctrl+V) e envie.");
 }
 
 /* ---------- Render: Lançamentos ---------- */
@@ -788,6 +932,13 @@ $("btn-export-json").addEventListener("click", exportarJSON);
 $("btn-export-ics").addEventListener("click", exportarICS);
 $("aviso-backup").addEventListener("click", (e) => { if (e.target.closest("[data-backup]")) exportarJSON(); });
 $("btn-saldo-real").addEventListener("click", editarSaldoReal);
+$("cons-mais").addEventListener("click", () => { consMostrarTodos = !consMostrarTodos; renderConselheiro(); });
+$("cons-claude").addEventListener("click", conversarComConselheiro);
+$("cons-lista").addEventListener("click", (e) => {
+  if (e.target.closest("[data-acao-cons=saldo]")) editarSaldoReal();
+  if (e.target.closest("[data-backup]")) exportarJSON();
+  if (e.target.closest("[data-goto-pend]")) { $("mov-filtro").value = "pendentes"; mesAtual = mesDe(hojeISO()); render(); document.getElementById("dash-confirmar").scrollIntoView({ behavior: "smooth", block: "center" }); }
+});
 $("mov-filtro").addEventListener("change", renderDashboard);
 $("filtro-status").addEventListener("change", renderLancamentos);
 document.addEventListener("click", (e) => { const b = e.target.closest("[data-confirmar]"); if (b) { e.preventDefault(); confirmarTransacao(b.dataset.confirmar); } });

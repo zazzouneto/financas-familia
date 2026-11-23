@@ -223,3 +223,27 @@ tr.pago td { opacity: .6; }
 .modal-acoes { justify-content: flex-end; }
 #modal-campos { display: grid; gap: 10px; }
 @media (max-width: 900px) { .grid-hoje { grid-template-columns: 1fr; } }
+
+/* Conselheiro */
+.conselheiro { background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 9%, var(--surface)) 0%, var(--surface) 60%); border-color: color-mix(in srgb, var(--brand) 30%, var(--border)); }
+.cons-head { display: flex; align-items: center; gap: 14px; }
+.avatar { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--brand); flex: none; background: var(--surface-2); }
+.avatar-fallback { display: grid; place-items: center; font-weight: 700; font-size: 22px; color: var(--brand); }
+.cons-titulo { display: grid; flex: 1; min-width: 0; }
+.cons-titulo strong { font-size: 18px; }
+.cons-score { font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
+.cons-score.bom { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, transparent); }
+.cons-score.atencao { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.cons-score.critico { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 45%, transparent); }
+.cons-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cons-lista li { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font-size: 14px; line-height: 1.4; }
+.cons-lista li .ic { font-size: 18px; text-align: center; }
+.cons-lista li.alto { border-color: color-mix(in srgb, var(--neg) 45%, transparent); }
+.cons-lista li.medio { border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.cons-lista li.bom { border-color: color-mix(in srgb, var(--pos) 35%, transparent); }
+.cons-lista li .acao { white-space: nowrap; }
+.cons-dica { font-size: 13px; color: var(--muted); border-left: 3px solid var(--brand); padding: 4px 0 4px 10px; }
+.cons-dica strong { color: var(--text); }
+.cons-acoes { justify-content: flex-end; }
+@media (max-width: 600px) { .cons-lista li { grid-template-columns: 22px 1fr; } .cons-lista li .acao { grid-column: 2; justify-self: start; } }
+@media (max-width: 600px) { .cons-head { flex-wrap: wrap; } .cons-score { order: 3; flex-basis: 100%; text-align: center; } .avatar { width: 48px; height: 48px; } }
