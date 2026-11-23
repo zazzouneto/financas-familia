@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Impact Finance</title>
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0b0f0d">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- LOGIN -->
+  <main id="login-section" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand brand-lg"><span class="brand-mark">◆</span> Impact Finance</div>
+      <p class="muted">Controlo financeiro da família</p>
+      <input type="text" id="login-username" placeholder="Utilizador" autocomplete="username" required>
+      <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary">Entrar</button>
+      <p id="login-msg" class="login-msg"></p>
+    </form>
+  </main>
+
+  <!-- APP -->
+  <div id="app-section" class="app" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">◆</span> Impact Finance</div>
+      <nav class="tabs" id="tabs">
+        <button data-view="dashboard" class="active">Resumo</button>
+        <button data-view="lancamentos">Lançamentos</button>
+        <button data-view="orcamento">Orçamento</button>
+        <button data-view="metas">Metas</button>
+        <button data-view="dados">Dados</button>
+      </nav>
+      <button id="btn-logout" class="btn btn-ghost btn-sm">Sair</button>
+    </header>
+
+    <div class="monthbar" id="monthbar">
+      <button class="btn btn-ghost btn-icon" id="mes-anterior" aria-label="Mês anterior">‹</button>
+      <h2 id="mes-label">—</h2>
+      <button class="btn btn-ghost btn-icon" id="mes-seguinte" aria-label="Mês seguinte">›</button>
+      <button class="btn btn-ghost btn-sm" id="mes-hoje">Hoje</button>
+    </div>
+
+    <!-- RESUMO -->
+    <section class="view" id="view-dashboard">
+      <div class="kpis">
+        <div class="kpi"><span>Receitas</span><strong id="kpi-receitas" class="pos">—</strong></div>
+        <div class="kpi"><span>Despesas</span><strong id="kpi-despesas" class="neg">—</strong></div>
+        <div class="kpi"><span>Resultado do mês</span><strong id="kpi-resultado">—</strong></div>
+        <div class="kpi"><span>Saldo previsto no fim do mês</span><strong id="kpi-saldo">—</strong><small id="kpi-saldo-nota" class="muted"></small></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h3>Receitas vs despesas</h3><span class="legend"><i class="dot pos-bg"></i>Receitas <i class="dot neg-bg"></i>Despesas</span></div>
+          <div id="chart-barras" class="chart"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Despesas por categoria</h3></div>
+          <div id="chart-donut" class="chart donut-wrap"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h3>Orçamento do mês</h3><button class="btn btn-ghost btn-sm" data-goto="orcamento">Editar</button></div>
+          <div id="dash-orcamento"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Pagamentos do mês</h3></div>
+          <ul id="dash-vencimentos" class="due-list"></ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Metas</h3><button class="btn btn-ghost btn-sm" data-goto="metas">Ver todas</button></div>
+        <div id="dash-metas" class="metas-mini"></div>
+      </div>
+    </section>
+
+    <!-- LANÇAMENTOS -->
+    <section class="view" id="view-lancamentos" hidden>
+      <div class="card">
+        <div class="card-head"><h3 id="form-titulo">Novo lançamento</h3></div>
+        <form id="form-transacao" class="form-grid">
+          <div class="seg" role="radiogroup">
+            <label><input type="radio" name="tipo" value="despesa" checked><span>Despesa</span></label>
+            <label><input type="radio" name="tipo" value="receita"><span>Receita</span></label>
+          </div>
+          <label>Data<input type="date" id="f-data" required></label>
+          <label>Descrição<input type="text" id="f-descricao" placeholder="Ex.: Luz" required></label>
+          <label>Categoria<input type="text" id="f-categoria" list="lista-categorias" placeholder="Ex.: Contas Casa" required></label>
+          <label>Valor (€)<input type="number" step="0.01" min="0" id="f-valor" placeholder="0,00" required></label>
+          <label>Dia de vencimento<input type="number" min="1" max="31" id="f-vencimento" placeholder="opcional"></label>
+          <label class="check"><input type="checkbox" id="f-recorrente"> Repetir todos os meses (12 meses)</label>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" id="btn-cancelar" hidden>Cancelar</button>
+            <button type="submit" class="btn btn-primary" id="btn-salvar">Adicionar</button>
+          </div>
+        </form>
+        <datalist id="lista-categorias"></datalist>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Lançamentos</h3>
+          <div class="filters">
+            <select id="filtro-periodo"><option value="mes">Mês selecionado</option><option value="todos">Todos os meses</option></select>
+            <select id="filtro-tipo"><option value="">Todos os tipos</option><option value="receita">Receitas</option><option value="despesa">Despesas</option></select>
+            <select id="filtro-categoria"><option value="">Todas as categorias</option></select>
+            <input type="search" id="filtro-busca" placeholder="Pesquisar…">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th><th></th></tr></thead>
+            <tbody id="lista-transacoes"></tbody>
+            <tfoot><tr><td colspan="3" id="lista-resumo" class="muted"></td><td class="num" id="lista-total"></td><td></td></tr></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ORÇAMENTO -->
+    <section class="view" id="view-orcamento" hidden>
+      <div class="card">
+        <div class="card-head"><h3>Limites mensais por categoria</h3></div>
+        <p class="muted">Defina quanto pode gastar por mês em cada categoria. O progresso usa as despesas do mês selecionado.</p>
+        <div id="orcamento-lista"></div>
+        <form id="form-orcamento" class="inline-form">
+          <input type="text" id="o-categoria" list="lista-categorias" placeholder="Categoria" required>
+          <input type="number" step="0.01" min="0" id="o-limite" placeholder="Limite €" required>
+          <button class="btn btn-primary" type="submit">Adicionar limite</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- METAS -->
+    <section class="view" id="view-metas" hidden>
+      <div id="metas-lista" class="metas-grid"></div>
+      <div class="card">
+        <div class="card-head"><h3 id="meta-form-titulo">Nova meta</h3></div>
+        <form id="form-meta" class="form-grid">
+          <label>Nome<input type="text" id="m-nome" placeholder="Ex.: Fundo de emergência" required></label>
+          <label>Valor alvo (€)<input type="number" step="0.01" min="0" id="m-alvo" required></label>
+          <label>Já guardado / pago (€)<input type="number" step="0.01" min="0" id="m-atual" value="0"></label>
+          <label>Prazo<input type="date" id="m-prazo"></label>
+          <label class="wide">Notas<input type="text" id="m-nota" placeholder="opcional"></label>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" id="m-cancelar" hidden>Cancelar</button>
+            <button type="submit" class="btn btn-primary" id="m-salvar">Criar meta</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- DADOS -->
+    <section class="view" id="view-dados" hidden>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h3>Importar</h3></div>
+          <p class="muted">Carregue um ficheiro <code>.json</code> exportado pelo app (ou o ficheiro gerado a partir da planilha).</p>
+          <input type="file" id="import-file" accept=".json,application/json">
+          <label class="check"><input type="checkbox" id="import-substituir"> Substituir tudo (em vez de juntar)</label>
+          <button class="btn btn-primary" id="btn-importar">Importar</button>
+          <p id="import-msg" class="muted"></p>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Exportar / cópia de segurança</h3></div>
+          <p class="muted">Os dados ficam guardados só neste navegador. Exporte com regularidade.</p>
+          <div class="btn-row">
+            <button class="btn" id="btn-export-json">Exportar JSON</button>
+            <button class="btn" id="btn-export-csv">Exportar CSV (Excel)</button>
+          </div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h3>Saldo inicial</h3></div>
+          <p class="muted">Saldo da conta numa data de referência. O saldo previsto soma os lançamentos a partir desta data.</p>
+          <form id="form-saldo" class="inline-form">
+            <input type="number" step="0.01" id="s-valor" placeholder="Valor €" required>
+            <input type="date" id="s-data" required>
+            <button class="btn btn-primary" type="submit">Guardar</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Acesso</h3></div>
+          <form id="form-senha" class="inline-form">
+            <input type="text" id="u-nome" placeholder="Utilizador" autocomplete="username" required>
+            <input type="password" id="u-senha" placeholder="Nova senha" autocomplete="new-password" required>
+            <button class="btn" type="submit">Alterar</button>
+          </form>
+          <p class="muted small">O login protege apenas o ecrã deste aparelho; não é encriptação.</p>
+          <button class="btn btn-danger" id="btn-apagar-tudo">Apagar todos os dados</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
