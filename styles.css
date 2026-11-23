@@ -190,3 +190,14 @@ tfoot td { border-bottom: none; font-weight: 600; }
 .money { display: flex; gap: 6px; }
 .money select { width: 64px; flex: none; padding: 10px 6px; }
 @media (max-width: 600px) { .fx-pill { flex-basis: 100%; text-align: center; margin-left: 0; } .monthbar { flex-wrap: wrap; } }
+
+.bar.stack { display: flex; }
+.bar.stack > i { border-radius: 0; }
+.bar.stack > i:first-child { border-radius: 99px 0 0 99px; }
+.bar.stack > i.prog { background: color-mix(in srgb, var(--pos) 35%, transparent); }
+.warn-txt { color: var(--warn); }
+details.plano summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+details.plano table { margin-top: 6px; font-size: 13px; }
+details.plano td, details.plano th { padding: 6px 8px; }
+details.plano tr.quit td { color: var(--pos); font-weight: 600; }
+.metas-grid { align-items: start; }

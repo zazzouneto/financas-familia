@@ -1,6 +1,6 @@
 // Cache simples para o app funcionar offline. Os dados ficam no localStorage, não aqui.
-const CACHE = "impactfinance-v3";
-const FICHEIROS = ["./", "./index.html", "./styles.css?v=3", "./app.js?v=3", "./manifest.json", "./icon-192.png", "./icon-512.png"];
+const CACHE = "impactfinance-v4";
+const FICHEIROS = ["./", "./index.html", "./styles.css?v=4", "./app.js?v=4", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FICHEIROS)).then(() => self.skipWaiting()));

@@ -62,7 +62,7 @@ function normalizarTransacao(t) {
 }
 function normalizarMeta(m) {
   return { id: String(m.id || uid()), nome: String(m.nome || "Meta"), moeda: m.moeda === "BRL" ? "BRL" : "EUR",
-    alvo: Number(m.alvo) || 0, atual: Number(m.atual) || 0, prazo: m.prazo || "", nota: m.nota || "" };
+    alvo: Number(m.alvo) || 0, atual: Number(m.atual) || 0, prazo: m.prazo || "", nota: m.nota || "", vinculo: m.vinculo || "" };
 }
 function carregar() {
   try {
@@ -249,7 +249,7 @@ function renderDashboard() {
 
   // Metas
   $("dash-metas").innerHTML = state.metas.length
-    ? state.metas.map(m => linhaProgresso(m.nome, m.atual, m.alvo, "", (v) => fmtMoeda(v, m.moeda))).join("")
+    ? state.metas.map(m => linhaProgresso(m.nome, progressoMeta(m).atual, m.alvo, "", (v) => fmtMoeda(v, m.moeda))).join("")
     : `<p class="empty">Nenhuma meta criada.</p>`;
 }
 
@@ -397,27 +397,59 @@ function renderOrcamento() {
 }
 
 /* ---------- Render: Metas ---------- */
+/* Meta ligada a lançamentos: o progresso vem das despesas cuja descrição começa pelo "vínculo". */
+function emMoedaMeta(t, m) { return m.moeda === "BRL" ? (t.valorBRL || r2(t.valor * cambio())) : t.valor; }
+function progressoMeta(m) {
+  const hoje = hojeISO();
+  const v = (m.vinculo || "").trim().toLowerCase();
+  const lig = v ? state.transacoes.filter(t => t.tipo === "despesa" && t.descricao.toLowerCase().startsWith(v)).sort((a, b) => a.data.localeCompare(b.data)) : [];
+  const pagoLig = lig.filter(t => t.data <= hoje).reduce((a, t) => a + emMoedaMeta(t, m), 0);
+  const atual = (m.atual || 0) + pagoLig;
+  let acum = atual, quitacao = null;
+  const plano = lig.filter(t => t.data > hoje).map(t => {
+    const val = emMoedaMeta(t, m); acum += val;
+    const resto = Math.max(0, m.alvo - acum);
+    if (!quitacao && acum >= m.alvo - 0.01) quitacao = t.data;
+    return { t, val, resto };
+  });
+  const programado = acum - atual;
+  return { atual, plano, quitacao, programado, ligados: lig.length, falta: Math.max(0, m.alvo - acum) };
+}
+
 function renderMetas() {
   const hoje = hojeISO();
   $("metas-lista").innerHTML = state.metas.map(m => {
-    const pct = m.alvo ? Math.min(100, (m.atual / m.alvo) * 100) : 0;
-    let ritmo = "";
-    if (m.prazo && m.atual < m.alvo) {
-      const meses = Math.max(1, (Number(m.prazo.slice(0, 4)) - Number(hoje.slice(0, 4))) * 12 + Number(m.prazo.slice(5, 7)) - Number(hoje.slice(5, 7)));
-      ritmo = m.prazo < hoje ? `<span class="neg">Prazo ultrapassado</span>` : `≈ ${fmtMoeda((m.alvo - m.atual) / meses, m.moeda)} por mês até ${dataCurta(m.prazo)}`;
-    }
     const F = (v) => fmtMoeda(v, m.moeda);
-    const eq = m.moeda === "BRL" ? `<div class="row"><span>≈ ${fmt(paraEUR(m.alvo - m.atual))} em falta ao câmbio atual</span></div>` : "";
+    const p = progressoMeta(m);
+    const pct = m.alvo ? Math.min(100, (p.atual / m.alvo) * 100) : 0;
+    const pctProg = m.alvo ? Math.min(100 - pct, (p.programado / m.alvo) * 100) : 0;
+    let linhas = "";
+    if (!m.alvo) linhas += `<div class="row"><span class="warn-txt">Defina o valor total (✏️) para acompanhar esta meta.</span></div>`;
+    if (m.vinculo) {
+      linhas += `<div class="row"><span>Ligada aos lançamentos "${esc(m.vinculo)}"</span><span>${p.ligados} pagamento(s)</span></div>`;
+      if (m.alvo) linhas += p.quitacao
+        ? `<div class="row"><span>Quitação prevista</span><strong class="pos">${nomeMes(mesDe(p.quitacao))}</strong></div>`
+        : `<div class="row"><span>Sem pagamentos suficientes programados</span><span class="neg">faltam ${F(p.falta)}</span></div>`;
+    } else if (m.prazo && p.atual < m.alvo) {
+      const meses = Math.max(1, (Number(m.prazo.slice(0, 4)) - Number(hoje.slice(0, 4))) * 12 + Number(m.prazo.slice(5, 7)) - Number(hoje.slice(5, 7)));
+      linhas += `<div class="row"><span>${m.prazo < hoje ? `<span class="neg">Prazo ultrapassado</span>` : `≈ ${F((m.alvo - p.atual) / meses)} por mês até ${dataCurta(m.prazo)}`}</span></div>`;
+    }
+    if (m.moeda === "BRL" && m.alvo) linhas += `<div class="row"><span>Em falta ≈ ${fmt(paraEUR(Math.max(0, m.alvo - p.atual)))} ao câmbio de hoje</span></div>`;
+    const tabela = p.plano.length ? `<details class="plano"><summary>Ver plano de pagamento (${p.plano.length})</summary>
+      <table><thead><tr><th>Mês</th><th class="num">Pagamento</th><th class="num">Fica a dever</th></tr></thead><tbody>
+      ${p.plano.map(x => `<tr${x.t.data === p.quitacao ? ' class="quit"' : ""}><td>${MESES_CURTOS[Number(x.t.data.slice(5, 7)) - 1]} ${x.t.data.slice(0, 4)}</td>
+        <td class="num">${F(x.val)}${m.moeda === "BRL" && !x.t.valorBRL ? `<span class="sub">${fmt(x.t.valor)}</span>` : ""}</td><td class="num">${F(x.resto)}</td></tr>`).join("")}
+      </tbody></table></details>` : "";
     return `<div class="card meta-card">
       <div class="card-head"><h3>${esc(m.nome)}</h3>
         <span><button class="icon-btn" data-editar-meta="${esc(m.id)}" title="Editar">✏️</button><button class="icon-btn" data-remover-meta="${esc(m.id)}" title="Remover">🗑️</button></span></div>
-      <div class="big">${F(m.atual)} <span class="muted" style="font-size:15px;font-weight:400">de ${F(m.alvo)}</span></div>
-      <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="row"><span>${Math.round(pct)}% concluído</span><span>Faltam ${F(Math.max(0, m.alvo - m.atual))}</span></div>
-      ${eq}
-      ${ritmo ? `<div class="row"><span>${ritmo}</span></div>` : ""}
+      <div class="big">${F(p.atual)} <span class="muted" style="font-size:15px;font-weight:400">pagos de ${F(m.alvo)}</span></div>
+      <div class="bar stack"><i style="width:${pct}%"></i><i class="prog" style="width:${pctProg}%"></i></div>
+      <div class="row"><span>${Math.round(pct)}% pago${p.programado ? ` · ${Math.round(pctProg)}% programado` : ""}</span><span>Faltam ${F(Math.max(0, m.alvo - p.atual))}</span></div>
+      ${linhas}
       ${m.nota ? `<p class="muted small">${esc(m.nota)}</p>` : ""}
-      <form class="add" data-aporte="${esc(m.id)}"><input type="number" step="0.01" placeholder="Valor a adicionar ${m.moeda === "BRL" ? "R$" : "€"}" required><button class="btn btn-sm" type="submit">+ Adicionar</button></form>
+      ${tabela}
+      <form class="add" data-aporte="${esc(m.id)}"><input type="number" step="0.01" placeholder="Pagamento extra ${m.moeda === "BRL" ? "R$" : "€"}" required><button class="btn btn-sm" type="submit">+ Registar</button></form>
     </div>`;
   }).join("") || `<div class="card"><p class="empty">Crie a sua primeira meta abaixo — ex.: fundo de emergência ou quitar um crédito.</p></div>`;
 }
@@ -563,7 +595,7 @@ $("orcamento-lista").addEventListener("click", (e) => {
 
 $("form-meta").addEventListener("submit", (e) => {
   e.preventDefault();
-  const item = { moeda: $("m-moeda").value, nome: $("m-nome").value.trim(), alvo: Number($("m-alvo").value) || 0, atual: Number($("m-atual").value) || 0, prazo: $("m-prazo").value, nota: $("m-nota").value.trim() };
+  const item = { moeda: $("m-moeda").value, nome: $("m-nome").value.trim(), alvo: Number($("m-alvo").value) || 0, atual: Number($("m-atual").value) || 0, prazo: $("m-prazo").value, nota: $("m-nota").value.trim(), vinculo: $("m-vinculo").value.trim() };
   if (editandoMetaId) Object.assign(state.metas.find(m => m.id === editandoMetaId), item);
   else state.metas.push({ id: uid(), ...item });
   salvar(); limparFormMeta(); renderMetas(); toast("Meta guardada.");
@@ -573,7 +605,7 @@ $("metas-lista").addEventListener("click", (e) => {
   const ed = e.target.closest("[data-editar-meta]"), rm = e.target.closest("[data-remover-meta]");
   if (ed) {
     const m = state.metas.find(x => x.id === ed.dataset.editarMeta);
-    $("m-moeda").value = m.moeda || "EUR"; $("m-nome").value = m.nome; $("m-alvo").value = m.alvo; $("m-atual").value = m.atual; $("m-prazo").value = m.prazo || ""; $("m-nota").value = m.nota || "";
+    $("m-moeda").value = m.moeda || "EUR"; $("m-nome").value = m.nome; $("m-alvo").value = m.alvo; $("m-atual").value = m.atual; $("m-prazo").value = m.prazo || ""; $("m-nota").value = m.nota || ""; $("m-vinculo").value = m.vinculo || "";
     editandoMetaId = m.id; $("m-salvar").textContent = "Guardar meta"; $("meta-form-titulo").textContent = "Editar meta"; $("m-cancelar").hidden = false;
     $("form-meta").scrollIntoView({ behavior: "smooth" });
   }
