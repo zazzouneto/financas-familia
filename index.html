@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
 
@@ -48,9 +48,22 @@
 
     <!-- RESUMO -->
     <section class="view" id="view-dashboard">
+      <div id="aviso-backup" class="aviso" hidden></div>
+      <div class="grid-hoje">
+        <div class="card saldo-real-card">
+          <div class="card-head"><h3>Saldo real na conta</h3><button class="btn btn-sm btn-primary" id="btn-saldo-real">Atualizar saldo</button></div>
+          <div class="saldo-real" id="saldo-real-valor">—</div>
+          <small class="muted" id="saldo-real-nota">Ainda não definido. Toque em "Atualizar saldo" e escreva quanto tem hoje na conta.</small>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>A confirmar</h3><span class="muted small">atrasados e próximos 7 dias</span></div>
+          <ul id="dash-confirmar" class="due-list"></ul>
+        </div>
+      </div>
+
       <div class="kpis">
-        <div class="kpi"><span>Receitas</span><strong id="kpi-receitas" class="pos">—</strong></div>
-        <div class="kpi"><span>Despesas</span><strong id="kpi-despesas" class="neg">—</strong></div>
+        <div class="kpi"><span>Receitas</span><strong id="kpi-receitas" class="pos">—</strong><small id="kpi-receitas-nota" class="muted"></small></div>
+        <div class="kpi"><span>Despesas</span><strong id="kpi-despesas" class="neg">—</strong><small id="kpi-despesas-nota" class="muted"></small></div>
         <div class="kpi"><span>Resultado do mês</span><strong id="kpi-resultado">—</strong></div>
         <div class="kpi"><span>Saldo previsto no fim do mês</span><strong id="kpi-saldo">—</strong><small id="kpi-saldo-nota" class="muted"></small></div>
       </div>
@@ -72,7 +85,7 @@
           <div id="dash-orcamento"></div>
         </div>
         <div class="card">
-          <div class="card-head"><h3>Pagamentos do mês</h3></div>
+          <div class="card-head"><h3>Movimentos do mês</h3><select id="mov-filtro" class="mini-select"><option value="pendentes">Pendentes</option><option value="todos">Todos</option><option value="pagos">Confirmados</option></select></div>
           <ul id="dash-vencimentos" class="due-list"></ul>
         </div>
       </div>
@@ -98,6 +111,7 @@
           <label>Valor<span class="money"><select id="f-moeda"><option value="EUR">€</option><option value="BRL">R$</option></select><input type="number" step="0.01" min="0" id="f-valor" placeholder="0,00" required></span><small id="f-conv" class="muted"></small></label>
           <label>Dia de vencimento<input type="number" min="1" max="31" id="f-vencimento" placeholder="opcional"></label>
           <label class="check"><input type="checkbox" id="f-recorrente"> Repetir todos os meses (12 meses)</label>
+          <label class="check" id="f-serie-wrap" hidden><input type="checkbox" id="f-serie" checked> Aplicar também aos próximos desta série (valor, descrição, categoria e vencimento)</label>
           <div class="form-actions">
             <button type="button" class="btn btn-ghost" id="btn-cancelar" hidden>Cancelar</button>
             <button type="submit" class="btn btn-primary" id="btn-salvar">Adicionar</button>
@@ -111,6 +125,7 @@
           <h3>Lançamentos</h3>
           <div class="filters">
             <select id="filtro-periodo"><option value="mes">Mês selecionado</option><option value="todos">Todos os meses</option></select>
+            <select id="filtro-status"><option value="">Pagos e pendentes</option><option value="pendente">Só pendentes</option><option value="pago">Só confirmados</option></select>
             <select id="filtro-tipo"><option value="">Todos os tipos</option><option value="receita">Receitas</option><option value="despesa">Despesas</option></select>
             <select id="filtro-categoria"><option value="">Todas as categorias</option></select>
             <input type="search" id="filtro-busca" placeholder="Pesquisar…">
@@ -118,9 +133,9 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th><th></th></tr></thead>
+            <thead><tr><th></th><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th><th></th></tr></thead>
             <tbody id="lista-transacoes"></tbody>
-            <tfoot><tr><td colspan="3" id="lista-resumo" class="muted"></td><td class="num" id="lista-total"></td><td></td></tr></tfoot>
+            <tfoot><tr><td colspan="4" id="lista-resumo" class="muted"></td><td class="num" id="lista-total"></td><td></td></tr></tfoot>
           </table>
         </div>
       </div>
@@ -175,6 +190,7 @@
         <div class="card">
           <div class="card-head"><h3>Exportar / cópia de segurança</h3></div>
           <p class="muted">Os dados ficam guardados só neste navegador. Exporte com regularidade.</p>
+          <p class="small" id="backup-info"></p>
           <div class="btn-row">
             <button class="btn" id="btn-export-json">Exportar JSON</button>
             <button class="btn" id="btn-export-csv">Exportar CSV (Excel)</button>
@@ -192,13 +208,10 @@
           </form>
         </div>
         <div class="card">
-          <div class="card-head"><h3>Saldo inicial</h3></div>
-          <p class="muted">Saldo da conta numa data de referência. O saldo previsto soma os lançamentos a partir desta data.</p>
-          <form id="form-saldo" class="inline-form">
-            <input type="number" step="0.01" id="s-valor" placeholder="Valor €" required>
-            <input type="date" id="s-data" required>
-            <button class="btn btn-primary" type="submit">Guardar</button>
-          </form>
+          <div class="card-head"><h3>Agenda e alertas</h3></div>
+          <p class="muted">Exporta os pagamentos e recebimentos pendentes dos próximos 12 meses para o calendário (Google, iPhone, Outlook), com alerta na véspera às 9h e no próprio dia às 9h. Usa o dia de vencimento de cada lançamento.</p>
+          <div class="btn-row"><button class="btn btn-primary" id="btn-export-ics">Exportar para a agenda (.ics)</button></div>
+          <p class="muted small">Google Agenda: no computador, Definições → Importar e exportar → escolha o ficheiro. iPhone: abra o ficheiro e toque em "Adicionar tudo". Depois de mudar vencimentos, exporte de novo (os eventos são atualizados, não duplicados, no iPhone/Outlook; no Google, apague o calendário antigo antes).</p>
         </div>
         <div class="card">
           <div class="card-head"><h3>Acesso</h3></div>
@@ -214,7 +227,18 @@
     </section>
   </div>
 
+  <div id="modal" class="modal" hidden>
+    <form class="modal-card" id="modal-form">
+      <h3 id="modal-titulo">—</h3>
+      <p class="muted small" id="modal-sub"></p>
+      <div id="modal-campos"></div>
+      <div class="btn-row modal-acoes">
+        <button type="button" class="btn btn-ghost" id="modal-cancelar">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="modal-ok">Confirmar</button>
+      </div>
+    </form>
+  </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

@@ -43,7 +43,7 @@ const dataCurta = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
 
 /* ---------- Estado ---------- */
 function estadoVazio() {
-  return { versao: 2, transacoes: [], orcamentos: [], metas: [], config: { saldoInicial: { valor: 0, data: "" }, cambio: { valor: 6, data: "", fonte: "" } } };
+  return { versao: 2, transacoes: [], orcamentos: [], metas: [], config: { saldoInicial: { valor: 0, data: "" }, cambio: { valor: 6, data: "", fonte: "" }, saldoReal: null, ultimoBackup: "" } };
 }
 function normalizarTransacao(t) {
   return {
@@ -58,6 +58,9 @@ function normalizarTransacao(t) {
     serieId: t.serieId || null,
     nota: t.nota || "",
     origem: t.origem || "",
+    pago: !!t.pago,
+    pagoEm: t.pagoEm || "",
+    valorPrevisto: t.valorPrevisto != null ? Number(t.valorPrevisto) : null,
   };
 }
 function normalizarMeta(m) {
@@ -93,7 +96,7 @@ function aplicarCambio() {
   const inicio = `${mesDe(hojeISO())}-01`;
   let n = 0;
   state.transacoes.forEach(t => {
-    if (t.valorBRL && t.data >= inicio) { const v = paraEUR(t.valorBRL); if (v !== t.valor) { t.valor = v; n++; } }
+    if (t.valorBRL && !t.pago && t.data >= inicio) { const v = paraEUR(t.valorBRL); if (v !== t.valor) { t.valor = v; n++; } }
   });
   return n;
 }
@@ -140,6 +143,89 @@ function saldoAte(dataLimite) {
     .filter(t => (!ini.data || t.data >= ini.data) && t.data <= dataLimite)
     .reduce((a, t) => a + sinal(t), 0);
 }
+// Data em que o lançamento é pago/recebido: o dia de vencimento dentro do mês do lançamento, ou a própria data.
+function dataVenc(t) {
+  if (!t.vencimento) return t.data;
+  const ym = mesDe(t.data), [y, m] = ym.split("-").map(Number);
+  return `${ym}-${String(Math.min(t.vencimento, new Date(y, m, 0).getDate())).padStart(2, "0")}`;
+}
+const temSaldoReal = () => !!(state.config.saldoReal && state.config.saldoReal.data);
+// Saldo previsto numa data: saldo real + tudo o que ainda está pendente até essa data (inclui atrasados).
+function saldoPrevisto(dataLimite) {
+  if (!temSaldoReal()) return saldoAte(dataLimite);
+  const sr = state.config.saldoReal;
+  return (Number(sr.valor) || 0) + state.transacoes
+    .filter(t => !t.pago && t.data >= (sr.desde || `${mesDe(hojeISO())}-01`) && dataVenc(t) <= dataLimite)
+    .reduce((a, t) => a + sinal(t), 0);
+}
+function pendentesAte(dataLimite) {
+  const desde = state.config.saldoReal?.desde || `${mesDe(hojeISO())}-01`;
+  return state.transacoes.filter(t => !t.pago && t.data >= desde && dataVenc(t) <= dataLimite)
+    .sort((a, b) => dataVenc(a).localeCompare(dataVenc(b)) || (a.tipo === "receita" ? -1 : 1));
+}
+function somarDias(data, n) {
+  const d = new Date(Number(data.slice(0, 4)), Number(data.slice(5, 7)) - 1, Number(data.slice(8, 10)) + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/* ---------- Confirmar pagamentos / saldo real ---------- */
+function abrirModal({ titulo, sub = "", campos, ok = "Confirmar", onOk }) {
+  $("modal-titulo").textContent = titulo; $("modal-sub").textContent = sub;
+  $("modal-campos").innerHTML = campos; $("modal-ok").textContent = ok;
+  $("modal").hidden = false;
+  const f = $("modal-campos").querySelector("input"); if (f) setTimeout(() => f.focus(), 30);
+  abrirModal._ok = onOk;
+}
+function fecharModal() { $("modal").hidden = true; abrirModal._ok = null; }
+
+function confirmarTransacao(id) {
+  const t = state.transacoes.find(x => x.id === id); if (!t) return;
+  if (t.pago) { // desfazer
+    if (temSaldoReal()) state.config.saldoReal.valor = r2(state.config.saldoReal.valor - sinal(t));
+    t.pago = false; t.pagoEm = "";
+    if (t.valorPrevisto != null) { t.valor = t.valorPrevisto; t.valorPrevisto = null; }
+    salvar(); render(); toast(`"${t.descricao}" voltou a pendente.`); return;
+  }
+  const rec = t.tipo === "receita";
+  abrirModal({
+    titulo: rec ? `Confirmar recebimento` : `Confirmar pagamento`,
+    sub: `${t.descricao} · previsto ${fmt(t.valor)}${t.valorBRL ? ` (${fmtBRL(t.valorBRL)})` : ""} · vence ${dataCurta(dataVenc(t))}`,
+    campos: `<label>Valor ${rec ? "recebido" : "pago"} (€)<input type="number" step="0.01" min="0" id="mc-valor" value="${t.valor}" required></label>
+             <label>Data<input type="date" id="mc-data" value="${hojeISO()}" required></label>
+             ${temSaldoReal() ? `<p class="muted small">O saldo real vai ${rec ? "aumentar" : "diminuir"} este valor.</p>` : `<p class="muted small">Dica: defina o saldo real no Resumo para o app ir atualizando o saldo sozinho.</p>`}`,
+    ok: rec ? "Recebido ✓" : "Pago ✓",
+    onOk: () => {
+      const v = r2(Number($("mc-valor").value));
+      if (!(v >= 0)) return false;
+      if (v !== t.valor) { t.valorPrevisto = t.valor; t.valor = v; }
+      t.pago = true; t.pagoEm = $("mc-data").value || hojeISO();
+      if (temSaldoReal()) state.config.saldoReal.valor = r2(state.config.saldoReal.valor + sinal(t));
+      salvar(); render(); toast(`${rec ? "Recebimento" : "Pagamento"} confirmado: ${t.descricao} ${fmt(v)}.`);
+    },
+  });
+}
+
+function editarSaldoReal() {
+  const hoje = hojeISO();
+  const atrasados = pendentesAte(hoje);
+  const sr = state.config.saldoReal;
+  abrirModal({
+    titulo: "Atualizar saldo real",
+    sub: "Escreva quanto tem agora na conta (como aparece no banco).",
+    campos: `<label>Saldo atual (€)<input type="number" step="0.01" id="ms-valor" value="${sr ? sr.valor : ""}" required></label>
+      ${atrasados.length ? `<label class="check"><input type="checkbox" id="ms-quitar" ${sr ? "" : "checked"}> Já paguei/recebi os ${atrasados.length} lançamento(s) previstos até hoje (marcar como confirmados)</label>
+      <p class="muted small">${atrasados.slice(0, 6).map(t => `${dataCurta(dataVenc(t)).slice(0, 5)} ${esc(t.descricao)} ${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}`).join(" · ")}${atrasados.length > 6 ? " …" : ""}</p>` : ""}`,
+    ok: "Guardar saldo",
+    onOk: () => {
+      const v = Number($("ms-valor").value);
+      if (Number.isNaN(v)) return false;
+      if ($("ms-quitar") && $("ms-quitar").checked) atrasados.forEach(t => { t.pago = true; t.pagoEm = hoje; });
+      state.config.saldoReal = { valor: r2(v), data: new Date().toISOString(), desde: sr?.desde || `${mesDe(hoje)}-01` };
+      salvar(); render(); toast("Saldo real atualizado.");
+    },
+  });
+}
+
 function gastoCategoria(ym, cat) {
   return doMes(ym).filter(t => t.tipo === "despesa" && t.categoria === cat).reduce((a, t) => a + t.valor, 0);
 }
@@ -212,18 +298,38 @@ function renderDashboard() {
   const r = soma(lista, "receita"), d = soma(lista, "despesa");
   $("kpi-receitas").textContent = fmt(r);
   $("kpi-despesas").textContent = fmt(d);
+  const rOk = soma(lista.filter(t => t.pago), "receita"), dOk = soma(lista.filter(t => t.pago), "despesa");
+  $("kpi-receitas-nota").textContent = r ? `${fmt(rOk)} recebido` : "";
+  $("kpi-despesas-nota").textContent = d ? `${fmt(dOk)} pago` : "";
   const res = $("kpi-resultado");
   res.textContent = fmt(r - d); res.className = r - d >= 0 ? "pos" : "neg";
-  const ini = state.config.saldoInicial;
   const saldoEl = $("kpi-saldo");
-  if (ini && ini.data && fimDoMes(mesAtual) < ini.data) {
-    saldoEl.textContent = "—"; saldoEl.className = "";
-    $("kpi-saldo-nota").textContent = `antes do saldo inicial (${dataCurta(ini.data)})`;
+  const hoje = hojeISO();
+  if (temSaldoReal()) {
+    const sr = state.config.saldoReal;
+    $("saldo-real-valor").textContent = fmt(sr.valor); $("saldo-real-valor").className = "saldo-real " + (sr.valor >= 0 ? "pos" : "neg");
+    const d0 = new Date(sr.data);
+    $("saldo-real-nota").textContent = `Atualizado em ${d0.toLocaleDateString("pt-PT")} às ${d0.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}. Cada pagamento confirmado atualiza este valor.`;
+    if (fimDoMes(mesAtual) < hoje) { saldoEl.textContent = "—"; saldoEl.className = ""; $("kpi-saldo-nota").textContent = "mês passado"; }
+    else { const s = saldoPrevisto(fimDoMes(mesAtual)); saldoEl.textContent = fmt(s); saldoEl.className = s >= 0 ? "pos" : "neg"; $("kpi-saldo-nota").textContent = "saldo real + pendentes até ao fim do mês"; }
   } else {
-    const s = saldoAte(fimDoMes(mesAtual));
-    saldoEl.textContent = fmt(s); saldoEl.className = s >= 0 ? "pos" : "neg";
-    $("kpi-saldo-nota").textContent = ini && ini.data ? `desde ${dataCurta(ini.data)} (saldo inicial ${fmt(ini.valor)})` : "defina o saldo inicial em Dados";
+    $("saldo-real-valor").textContent = "—"; $("saldo-real-valor").className = "saldo-real";
+    const ini = state.config.saldoInicial;
+    if (ini && ini.data && fimDoMes(mesAtual) < ini.data) { saldoEl.textContent = "—"; saldoEl.className = ""; $("kpi-saldo-nota").textContent = `antes do saldo inicial (${dataCurta(ini.data)})`; }
+    else { const s = saldoAte(fimDoMes(mesAtual)); saldoEl.textContent = fmt(s); saldoEl.className = s >= 0 ? "pos" : "neg"; $("kpi-saldo-nota").textContent = ini && ini.data ? `plano desde ${dataCurta(ini.data)} · defina o saldo real acima` : "defina o saldo real acima"; }
   }
+
+  // A confirmar: atrasados + próximos 7 dias
+  const lim = somarDias(hoje, 7);
+  const conf = pendentesAte(lim);
+  $("dash-confirmar").innerHTML = conf.length ? conf.map(t => itemMov(t, hoje)).join("") : `<li class="empty" style="display:block">Nada pendente para os próximos 7 dias. 🎉</li>`;
+
+  // Aviso de cópia de segurança
+  const ub = state.config.ultimoBackup;
+  const dias = ub ? Math.floor((Date.parse(hoje) - Date.parse(ub)) / 864e5) : null;
+  const av = $("aviso-backup");
+  av.hidden = !(dias === null || dias >= 14);
+  av.innerHTML = `<span>💾 ${dias === null ? "Ainda não fez nenhuma cópia de segurança." : `Última cópia de segurança há ${dias} dias.`} Os dados só existem neste navegador.</span><button class="btn btn-sm" data-backup>Exportar agora</button>`;
 
   graficoBarras($("chart-barras"));
   graficoDonut($("chart-donut"));
@@ -234,23 +340,26 @@ function renderDashboard() {
     ? orc.map(o => linhaProgresso(o.categoria, gastoCategoria(mesAtual, o.categoria), o.limite)).join("")
     : `<p class="empty">Nenhum limite definido.</p>`;
 
-  // Pagamentos do mês
-  const hoje = hojeISO();
-  const desp = lista.filter(t => t.tipo === "despesa")
-    .map(t => ({ ...t, dia: t.vencimento || Number(t.data.slice(8, 10)) }))
-    .sort((a, b) => a.dia - b.dia || b.valor - a.valor);
-  $("dash-vencimentos").innerHTML = desp.length ? desp.map(t => {
-    const dataVenc = `${mesAtual}-${String(t.dia).padStart(2, "0")}`;
-    return `<li class="${dataVenc < hoje ? "past" : ""}">
-      <span class="due-day">${t.dia}<small>${MESES_CURTOS[Number(mesAtual.slice(5)) - 1]}</small></span>
-      <span>${esc(t.descricao)}<span class="cat">${esc(t.categoria)}</span></span>
-      <span class="v neg">${fmt(t.valor)}</span></li>`;
-  }).join("") : `<li class="empty" style="display:block">Sem despesas neste mês.</li>`;
+  // Movimentos do mês
+  const filtro = $("mov-filtro").value;
+  const mov = lista.filter(t => filtro === "todos" || (filtro === "pagos" ? t.pago : !t.pago))
+    .sort((a, b) => dataVenc(a).localeCompare(dataVenc(b)) || b.valor - a.valor);
+  $("dash-vencimentos").innerHTML = mov.length ? mov.map(t => itemMov(t, hoje)).join("")
+    : `<li class="empty" style="display:block">${filtro === "pendentes" ? "Tudo confirmado neste mês. ✅" : "Sem movimentos."}</li>`;
 
   // Metas
   $("dash-metas").innerHTML = state.metas.length
     ? state.metas.map(m => linhaProgresso(m.nome, progressoMeta(m).atual, m.alvo, "", (v) => fmtMoeda(v, m.moeda))).join("")
     : `<p class="empty">Nenhuma meta criada.</p>`;
+}
+
+function itemMov(t, hoje) {
+  const dv = dataVenc(t), atras = !t.pago && dv < hoje, rec = t.tipo === "receita";
+  return `<li class="${t.pago ? "pago" : ""} ${atras ? "atrasado" : ""}">
+    <span class="due-day">${Number(dv.slice(8, 10))}<small>${MESES_CURTOS[Number(dv.slice(5, 7)) - 1]}</small></span>
+    <span>${esc(t.descricao)}<span class="cat">${esc(t.categoria)}${atras ? " · atrasado" : ""}${t.pago ? ` · ${rec ? "recebido" : "pago"} ${dataCurta(t.pagoEm).slice(0, 5)}` : ""}</span></span>
+    <span class="v ${rec ? "pos" : "neg"}">${rec ? "+" : "−"}${fmt(t.valor)}</span>
+    <button class="chk ${t.pago ? "on" : ""}" data-confirmar="${esc(t.id)}" title="${t.pago ? "Desfazer confirmação" : rec ? "Confirmar recebimento" : "Confirmar pagamento"}">✓</button></li>`;
 }
 
 /* ---------- Render: Lançamentos ---------- */
@@ -262,15 +371,18 @@ function renderLancamentos() {
 
   const periodo = $("filtro-periodo").value, tipo = $("filtro-tipo").value, cat = selCat.value;
   const busca = $("filtro-busca").value.trim().toLowerCase();
+  const status = $("filtro-status").value;
   const lista = state.transacoes.filter(t =>
     (periodo === "todos" || mesDe(t.data) === mesAtual) &&
     (!tipo || t.tipo === tipo) && (!cat || t.categoria === cat) &&
+    (!status || (status === "pago" ? t.pago : !t.pago)) &&
     (!busca || `${t.descricao} ${t.categoria} ${t.nota}`.toLowerCase().includes(busca))
   ).sort((a, b) => b.data.localeCompare(a.data) || a.descricao.localeCompare(b.descricao));
 
   $("lista-transacoes").innerHTML = lista.length ? lista.map(t => `
-    <tr>
-      <td>${dataCurta(t.data)}${t.vencimento ? `<span class="sub">vence dia ${t.vencimento}</span>` : ""}</td>
+    <tr class="${t.pago ? "pago" : ""}">
+      <td><button class="chk ${t.pago ? "on" : ""}" data-confirmar="${esc(t.id)}" title="${t.pago ? "Desfazer confirmação" : "Confirmar"}">✓</button></td>
+      <td>${dataCurta(t.data)}${t.vencimento ? `<span class="sub">vence dia ${t.vencimento}</span>` : ""}${t.pago ? `<span class="sub pos">${t.tipo === "receita" ? "recebido" : "pago"} ${dataCurta(t.pagoEm)}</span>` : ""}</td>
       <td>${esc(t.descricao)}${t.serieId ? ' <span title="Recorrente">🔄</span>' : ""}${t.valorBRL ? `<span class="sub">${fmtBRL(t.valorBRL)}${t.nota && !t.nota.startsWith("R$") ? " · " + esc(t.nota) : ""}</span>` : t.nota ? `<span class="sub">${esc(t.nota)}</span>` : ""}</td>
       <td><span class="tag">${esc(t.categoria)}</span></td>
       <td class="num ${t.tipo === "receita" ? "pos" : "neg"}">${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}</td>
@@ -278,10 +390,10 @@ function renderLancamentos() {
         <button class="icon-btn" data-acao="editar" data-id="${esc(t.id)}" title="Editar">✏️</button>
         <button class="icon-btn" data-acao="remover" data-id="${esc(t.id)}" title="Remover">🗑️</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="5" class="empty">Nenhum lançamento encontrado.</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="6" class="empty">Nenhum lançamento encontrado.</td></tr>`;
 
   const total = lista.reduce((a, t) => a + sinal(t), 0);
-  $("lista-resumo").textContent = `${lista.length} lançamento(s)`;
+  $("lista-resumo").textContent = `${lista.length} lançamento(s) · ${lista.filter(t => t.pago).length} confirmado(s)`;
   const tot = $("lista-total");
   tot.textContent = fmt(total); tot.className = `num ${total >= 0 ? "pos" : "neg"}`;
 }
@@ -294,6 +406,7 @@ function limparForm() {
   $("form-titulo").textContent = "Novo lançamento";
   $("btn-cancelar").hidden = true;
   $("f-recorrente").disabled = false;
+  $("f-serie-wrap").hidden = true;
   $("f-moeda").value = "EUR"; atualizarConv();
 }
 function atualizarConv() {
@@ -314,6 +427,9 @@ function editarTransacao(id) {
   $("f-vencimento").value = t.vencimento || "";
   $("f-recorrente").checked = false;
   $("f-recorrente").disabled = true;
+  const proximos = t.serieId ? state.transacoes.filter(x => x.serieId === t.serieId && x.data > t.data && !x.pago).length : 0;
+  $("f-serie-wrap").hidden = !proximos; $("f-serie").checked = true;
+  if (proximos) $("f-serie-wrap").lastChild.textContent = ` Aplicar também aos próximos ${proximos} desta série (valor, descrição, categoria e vencimento)`;
   editandoId = id;
   $("btn-salvar").textContent = "Guardar alterações";
   $("form-titulo").textContent = "Editar lançamento";
@@ -337,8 +453,17 @@ function guardarTransacao(e) {
 
   if (editandoId) {
     const i = state.transacoes.findIndex(t => t.id === editandoId);
-    if (i !== -1) state.transacoes[i] = { ...state.transacoes[i], ...base, serieId: state.transacoes[i].serieId, nota: base.valorBRL ? state.transacoes[i].nota : (state.transacoes[i].nota || "").replace(/^R\$.*$/, ""), origem: state.transacoes[i].origem };
-    toast("Lançamento atualizado.");
+    const orig = state.transacoes[i];
+    if (i !== -1) state.transacoes[i] = { ...orig, ...base, serieId: orig.serieId, nota: base.valorBRL ? orig.nota : (orig.nota || "").replace(/^R\$.*$/, ""), origem: orig.origem, pago: orig.pago, pagoEm: orig.pagoEm, valorPrevisto: orig.valorPrevisto };
+    let n = 0;
+    if (orig.serieId && !$("f-serie-wrap").hidden && $("f-serie").checked) {
+      state.transacoes.forEach(x => {
+        if (x.serieId === orig.serieId && x.data > orig.data && !x.pago) {
+          Object.assign(x, { descricao: base.descricao, categoria: base.categoria, tipo: base.tipo, valor: base.valor, valorBRL: base.valorBRL, vencimento: base.vencimento }); n++;
+        }
+      });
+    }
+    toast(n ? `Lançamento e mais ${n} da série atualizados.` : "Lançamento atualizado.");
   } else if ($("f-recorrente").checked) {
     const serieId = uid();
     for (let i = 0; i < 12; i++) state.transacoes.push({ ...base, id: uid(), serieId, data: somarMesesData(base.data, i) });
@@ -403,10 +528,10 @@ function progressoMeta(m) {
   const hoje = hojeISO();
   const v = (m.vinculo || "").trim().toLowerCase();
   const lig = v ? state.transacoes.filter(t => t.tipo === "despesa" && t.descricao.toLowerCase().startsWith(v)).sort((a, b) => a.data.localeCompare(b.data)) : [];
-  const pagoLig = lig.filter(t => t.data <= hoje).reduce((a, t) => a + emMoedaMeta(t, m), 0);
+  const pagoLig = lig.filter(t => t.pago).reduce((a, t) => a + emMoedaMeta(t, m), 0);
   const atual = (m.atual || 0) + pagoLig;
   let acum = atual, quitacao = null;
-  const plano = lig.filter(t => t.data > hoje).map(t => {
+  const plano = lig.filter(t => !t.pago).map(t => {
     const val = emMoedaMeta(t, m); acum += val;
     const resto = Math.max(0, m.alvo - acum);
     if (!quitacao && acum >= m.alvo - Math.max(1, m.alvo * 0.0005)) quitacao = t.data; // tolerância para arredondamentos de câmbio
@@ -461,12 +586,34 @@ function limparFormMeta() {
 
 /* ---------- Render: Dados ---------- */
 function renderDados() {
-  const ini = state.config.saldoInicial || {};
-  if (document.activeElement !== $("s-valor")) $("s-valor").value = ini.data ? ini.valor : "";
-  if (document.activeElement !== $("s-data")) $("s-data").value = ini.data || "";
+  const ub = state.config.ultimoBackup;
+  $("backup-info").textContent = ub ? `Última cópia: ${dataCurta(ub)}` : "Ainda sem cópias de segurança.";
   const c = state.config.cambio || {};
   $("cambio-info").innerHTML = `<strong style="font-size:20px">1 € = ${fmtTaxa(cambio())}</strong> <span class="muted small">${c.data ? `${esc(c.fonte || "manual")} · ${esc(c.data)}` : "valor da planilha (ainda não atualizado)"}</span>`;
   $("u-nome").value = (JSON.parse(localStorage.getItem(USER_KEY) || "{}").username) || "";
+}
+
+/* ---------- Agenda (.ics) ---------- */
+function exportarICS() {
+  const hoje = hojeISO(), fim = somarDias(hoje, 366);
+  const itens = state.transacoes.filter(t => !t.pago && dataVenc(t) >= hoje && dataVenc(t) <= fim);
+  const dt = (d) => d.replace(/-/g, "");
+  const escI = (x) => String(x).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const linhas = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Financas Familia//PT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "X-WR-CALNAME:Finanças Família"];
+  itens.forEach(t => {
+    const d = dataVenc(t), rec = t.tipo === "receita";
+    const titulo = `${rec ? "💰 Receber" : "💸 Pagar"}: ${t.descricao} ${t.valorBRL ? fmtBRL(t.valorBRL) : fmt(t.valor)}`;
+    linhas.push("BEGIN:VEVENT", `UID:${t.id}@financas-familia`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${dt(d)}`, `DTEND;VALUE=DATE:${dt(somarDias(d, 1))}`,
+      `SUMMARY:${escI(titulo)}`, `DESCRIPTION:${escI(`${t.categoria} · ${fmt(t.valor)}${t.nota ? " · " + t.nota : ""}\nConfirme no app: https://zazzouneto.github.io/financas-familia/`)}`,
+      "TRANSP:TRANSPARENT",
+      "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${escI(titulo)}`, "TRIGGER:-PT15H", "END:VALARM",
+      "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${escI(titulo)}`, "TRIGGER:PT9H", "END:VALARM",
+      "END:VEVENT");
+  });
+  linhas.push("END:VCALENDAR");
+  baixar(`financas-familia-agenda-${hoje}.ics`, linhas.join("\r\n"), "text/calendar;charset=utf-8");
+  toast(`${itens.length} eventos exportados para a agenda.`);
 }
 
 /* ---------- Import / export ---------- */
@@ -476,9 +623,9 @@ function baixar(nome, conteudo, tipo) {
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function exportarCSV() {
-  const linhas = [["Data", "Tipo", "Descrição", "Categoria", "Valor €", "Valor R$", "Vencimento", "Nota"]];
+  const linhas = [["Data", "Tipo", "Descrição", "Categoria", "Valor €", "Valor R$", "Vencimento", "Estado", "Confirmado em", "Nota"]];
   [...state.transacoes].sort((a, b) => a.data.localeCompare(b.data)).forEach(t =>
-    linhas.push([t.data, t.tipo, t.descricao, t.categoria, String(t.valor).replace(".", ","), t.valorBRL ? String(t.valorBRL).replace(".", ",") : "", t.vencimento || "", t.nota]));
+    linhas.push([t.data, t.tipo, t.descricao, t.categoria, String(t.valor).replace(".", ","), t.valorBRL ? String(t.valorBRL).replace(".", ",") : "", t.vencimento || "", t.pago ? "confirmado" : "pendente", t.pagoEm, t.nota]));
   const csv = linhas.map(l => l.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
   baixar(`impactfinance-${hojeISO()}.csv`, "﻿" + csv, "text/csv;charset=utf-8");
 }
@@ -506,6 +653,8 @@ async function importar() {
       i === -1 ? state.metas.push(item) : (state.metas[i] = item);
     });
     if (dados.config && dados.config.saldoInicial) state.config.saldoInicial = dados.config.saldoInicial;
+    if (dados.config && dados.config.saldoReal) state.config.saldoReal = dados.config.saldoReal;
+    if (dados.config && dados.config.cambio && substituir) state.config.cambio = dados.config.cambio;
     aplicarCambio();
     salvar();
     const meses = [...new Set(tx.map(t => mesDe(t.data)))].sort();
@@ -630,13 +779,23 @@ $("form-cambio").addEventListener("submit", (e) => {
   const n = aplicarCambio(); salvar(); render(); e.target.reset();
   toast(`Cotação manual guardada${n ? ` · ${n} lançamento(s) recalculado(s)` : ""}.`);
 });
-$("btn-export-json").addEventListener("click", () => baixar(`impactfinance-${hojeISO()}.json`, JSON.stringify(state, null, 1), "application/json"));
+function exportarJSON() {
+  state.config.ultimoBackup = hojeISO(); salvar();
+  baixar(`financas-familia-${hojeISO()}.json`, JSON.stringify(state, null, 1), "application/json");
+  render(); toast("Cópia de segurança exportada.");
+}
+$("btn-export-json").addEventListener("click", exportarJSON);
+$("btn-export-ics").addEventListener("click", exportarICS);
+$("aviso-backup").addEventListener("click", (e) => { if (e.target.closest("[data-backup]")) exportarJSON(); });
+$("btn-saldo-real").addEventListener("click", editarSaldoReal);
+$("mov-filtro").addEventListener("change", renderDashboard);
+$("filtro-status").addEventListener("change", renderLancamentos);
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-confirmar]"); if (b) { e.preventDefault(); confirmarTransacao(b.dataset.confirmar); } });
+$("modal-cancelar").addEventListener("click", fecharModal);
+$("modal").addEventListener("click", (e) => { if (e.target.id === "modal") fecharModal(); });
+$("modal-form").addEventListener("submit", (e) => { e.preventDefault(); const f = abrirModal._ok; if (f && f() !== false) fecharModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("modal").hidden) fecharModal(); });
 $("btn-export-csv").addEventListener("click", exportarCSV);
-$("form-saldo").addEventListener("submit", (e) => {
-  e.preventDefault();
-  state.config.saldoInicial = { valor: Number($("s-valor").value) || 0, data: $("s-data").value };
-  salvar(); toast("Saldo inicial guardado.");
-});
 $("form-senha").addEventListener("submit", (e) => {
   e.preventDefault();
   localStorage.setItem(USER_KEY, JSON.stringify({ username: $("u-nome").value.trim(), password: $("u-senha").value }));
