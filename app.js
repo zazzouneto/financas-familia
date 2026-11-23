@@ -409,7 +409,7 @@ function progressoMeta(m) {
   const plano = lig.filter(t => t.data > hoje).map(t => {
     const val = emMoedaMeta(t, m); acum += val;
     const resto = Math.max(0, m.alvo - acum);
-    if (!quitacao && acum >= m.alvo - 0.01) quitacao = t.data;
+    if (!quitacao && acum >= m.alvo - Math.max(1, m.alvo * 0.0005)) quitacao = t.data; // tolerância para arredondamentos de câmbio
     return { t, val, resto };
   });
   const programado = acum - atual;
