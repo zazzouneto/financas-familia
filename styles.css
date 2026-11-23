@@ -185,3 +185,8 @@ tfoot td { border-bottom: none; font-weight: 600; }
 }
 .donut-wrap svg { width: 180px; max-width: 180px; }
 @media (max-width: 600px) { .chart { min-height: 0; } }
+
+.fx-pill { margin-left: auto; font-size: 13px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 99px; padding: 5px 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.money { display: flex; gap: 6px; }
+.money select { width: 64px; flex: none; padding: 10px 6px; }
+@media (max-width: 600px) { .fx-pill { flex-basis: 100%; text-align: center; margin-left: 0; } .monthbar { flex-wrap: wrap; } }

@@ -11,6 +11,12 @@ const CORES = ["--c1","--c2","--c3","--c4","--c5","--c6","--c7","--c8"].map(v =>
 const $ = (id) => document.getElementById(id);
 const eur = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" });
 const fmt = (v) => eur.format(v || 0);
+const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const fmtBRL = (v) => brl.format(v || 0);
+const fmtTaxa = (v) => "R$ " + Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const fmtMoeda = (v, moeda) => (moeda === "BRL" ? fmtBRL(v) : fmt(v));
+const r2 = (v) => Math.round(v * 100) / 100;
+const CAMBIO_API = "https://economia.awesomeapi.com.br/json/last/EUR-BRL";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -37,7 +43,7 @@ const dataCurta = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
 
 /* ---------- Estado ---------- */
 function estadoVazio() {
-  return { versao: 2, transacoes: [], orcamentos: [], metas: [], config: { saldoInicial: { valor: 0, data: "" } } };
+  return { versao: 2, transacoes: [], orcamentos: [], metas: [], config: { saldoInicial: { valor: 0, data: "" }, cambio: { valor: 6, data: "", fonte: "" } } };
 }
 function normalizarTransacao(t) {
   return {
@@ -47,11 +53,16 @@ function normalizarTransacao(t) {
     categoria: String(t.categoria ?? "Outros").trim() || "Outros",
     tipo: t.tipo === "receita" ? "receita" : "despesa",
     valor: Math.abs(Number(t.valor) || 0),
+    valorBRL: t.valorBRL ? Math.abs(Number(t.valorBRL)) : null,
     vencimento: t.vencimento ? Number(t.vencimento) : null,
     serieId: t.serieId || null,
     nota: t.nota || "",
     origem: t.origem || "",
   };
+}
+function normalizarMeta(m) {
+  return { id: String(m.id || uid()), nome: String(m.nome || "Meta"), moeda: m.moeda === "BRL" ? "BRL" : "EUR",
+    alvo: Number(m.alvo) || 0, atual: Number(m.atual) || 0, prazo: m.prazo || "", nota: m.nota || "" };
 }
 function carregar() {
   try {
@@ -59,7 +70,7 @@ function carregar() {
     if (raw) {
       const s = JSON.parse(raw);
       const base = estadoVazio();
-      return { ...base, ...s, config: { ...base.config, ...(s.config || {}) }, transacoes: (s.transacoes || []).map(normalizarTransacao) };
+      return { ...base, ...s, config: { ...base.config, ...(s.config || {}) }, transacoes: (s.transacoes || []).map(normalizarTransacao), metas: (s.metas || []).map(normalizarMeta) };
     }
     // migração da versão antiga (chave "transacoes")
     const antigas = JSON.parse(localStorage.getItem("transacoes") || "[]");
@@ -73,6 +84,34 @@ function carregar() {
 }
 let state = carregar();
 function salvar() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+
+/* ---------- Câmbio EUR → BRL ---------- */
+const cambio = () => Number(state.config.cambio?.valor) || 6;
+const paraEUR = (valorBRL) => r2(valorBRL / cambio());
+// Recalcula em euros os lançamentos em reais do mês atual em diante (os passados ficam com a cotação da época).
+function aplicarCambio() {
+  const inicio = `${mesDe(hojeISO())}-01`;
+  let n = 0;
+  state.transacoes.forEach(t => {
+    if (t.valorBRL && t.data >= inicio) { const v = paraEUR(t.valorBRL); if (v !== t.valor) { t.valor = v; n++; } }
+  });
+  return n;
+}
+async function atualizarCambio(manual = false) {
+  try {
+    const r = await fetch(CAMBIO_API, { cache: "no-store" });
+    const j = await r.json();
+    const v = Number(j?.EURBRL?.bid);
+    if (!(v > 0)) throw new Error("resposta inválida");
+    state.config.cambio = { valor: Math.round(v * 10000) / 10000, data: j.EURBRL.create_date || hojeISO(), fonte: "AwesomeAPI" };
+    const n = aplicarCambio();
+    salvar(); render();
+    if (manual) toast(`Cotação atualizada: 1 € = ${fmtTaxa(state.config.cambio.valor)}${n ? ` · ${n} lançamento(s) recalculado(s)` : ""}`);
+  } catch (e) {
+    console.warn("Câmbio:", e);
+    if (manual) toast("Não foi possível obter a cotação agora. Pode introduzir uma manualmente.");
+  }
+}
 
 /* ---------- UI state ---------- */
 let mesAtual = mesDe(hojeISO());
@@ -159,11 +198,11 @@ function graficoDonut(el) {
 }
 
 /* ---------- Render: Resumo ---------- */
-function linhaProgresso(nome, gasto, limite, extra = "") {
+function linhaProgresso(nome, gasto, limite, extra = "", f = fmt) {
   const pct = limite > 0 ? (gasto / limite) * 100 : 0;
   const cls = pct > 100 ? "over" : pct >= 85 ? "warn" : "";
   return `<div class="progress-row">
-    <div class="progress-top"><span>${esc(nome)}</span><span class="v">${fmt(gasto)} / ${extra || fmt(limite)}</span></div>
+    <div class="progress-top"><span>${esc(nome)}</span><span class="v">${f(gasto)} / ${extra || f(limite)}</span></div>
     <div class="bar ${cls}"><i style="width:${Math.min(100, pct)}%"></i></div>
   </div>`;
 }
@@ -210,7 +249,7 @@ function renderDashboard() {
 
   // Metas
   $("dash-metas").innerHTML = state.metas.length
-    ? state.metas.map(m => linhaProgresso(m.nome, m.atual, m.alvo)).join("")
+    ? state.metas.map(m => linhaProgresso(m.nome, m.atual, m.alvo, "", (v) => fmtMoeda(v, m.moeda))).join("")
     : `<p class="empty">Nenhuma meta criada.</p>`;
 }
 
@@ -232,7 +271,7 @@ function renderLancamentos() {
   $("lista-transacoes").innerHTML = lista.length ? lista.map(t => `
     <tr>
       <td>${dataCurta(t.data)}${t.vencimento ? `<span class="sub">vence dia ${t.vencimento}</span>` : ""}</td>
-      <td>${esc(t.descricao)}${t.serieId ? ' <span title="Recorrente">🔄</span>' : ""}${t.nota ? `<span class="sub">${esc(t.nota)}</span>` : ""}</td>
+      <td>${esc(t.descricao)}${t.serieId ? ' <span title="Recorrente">🔄</span>' : ""}${t.valorBRL ? `<span class="sub">${fmtBRL(t.valorBRL)}${t.nota && !t.nota.startsWith("R$") ? " · " + esc(t.nota) : ""}</span>` : t.nota ? `<span class="sub">${esc(t.nota)}</span>` : ""}</td>
       <td><span class="tag">${esc(t.categoria)}</span></td>
       <td class="num ${t.tipo === "receita" ? "pos" : "neg"}">${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}</td>
       <td class="actions">
@@ -255,6 +294,11 @@ function limparForm() {
   $("form-titulo").textContent = "Novo lançamento";
   $("btn-cancelar").hidden = true;
   $("f-recorrente").disabled = false;
+  $("f-moeda").value = "EUR"; atualizarConv();
+}
+function atualizarConv() {
+  const v = Number($("f-valor").value);
+  $("f-conv").textContent = $("f-moeda").value === "BRL" && v > 0 ? `≈ ${fmt(paraEUR(v))} (1 € = ${fmtTaxa(cambio())})` : "";
 }
 
 function editarTransacao(id) {
@@ -264,7 +308,9 @@ function editarTransacao(id) {
   $("f-data").value = t.data;
   $("f-descricao").value = t.descricao;
   $("f-categoria").value = t.categoria;
-  $("f-valor").value = t.valor;
+  $("f-moeda").value = t.valorBRL ? "BRL" : "EUR";
+  $("f-valor").value = t.valorBRL || t.valor;
+  atualizarConv();
   $("f-vencimento").value = t.vencimento || "";
   $("f-recorrente").checked = false;
   $("f-recorrente").disabled = true;
@@ -283,14 +329,15 @@ function guardarTransacao(e) {
     descricao: $("f-descricao").value,
     categoria: $("f-categoria").value,
     tipo: document.querySelector('input[name="tipo"]:checked').value,
-    valor: $("f-valor").value,
+    valor: $("f-moeda").value === "BRL" ? paraEUR(Number($("f-valor").value)) : $("f-valor").value,
+    valorBRL: $("f-moeda").value === "BRL" ? $("f-valor").value : null,
     vencimento: $("f-vencimento").value || null,
   });
   if (!base.data || !base.descricao || !(base.valor > 0)) { toast("Preencha data, descrição e um valor maior que zero."); return; }
 
   if (editandoId) {
     const i = state.transacoes.findIndex(t => t.id === editandoId);
-    if (i !== -1) state.transacoes[i] = { ...state.transacoes[i], ...base, serieId: state.transacoes[i].serieId, nota: state.transacoes[i].nota, origem: state.transacoes[i].origem };
+    if (i !== -1) state.transacoes[i] = { ...state.transacoes[i], ...base, serieId: state.transacoes[i].serieId, nota: base.valorBRL ? state.transacoes[i].nota : (state.transacoes[i].nota || "").replace(/^R\$.*$/, ""), origem: state.transacoes[i].origem };
     toast("Lançamento atualizado.");
   } else if ($("f-recorrente").checked) {
     const serieId = uid();
@@ -357,17 +404,20 @@ function renderMetas() {
     let ritmo = "";
     if (m.prazo && m.atual < m.alvo) {
       const meses = Math.max(1, (Number(m.prazo.slice(0, 4)) - Number(hoje.slice(0, 4))) * 12 + Number(m.prazo.slice(5, 7)) - Number(hoje.slice(5, 7)));
-      ritmo = m.prazo < hoje ? `<span class="neg">Prazo ultrapassado</span>` : `≈ ${fmt((m.alvo - m.atual) / meses)} por mês até ${dataCurta(m.prazo)}`;
+      ritmo = m.prazo < hoje ? `<span class="neg">Prazo ultrapassado</span>` : `≈ ${fmtMoeda((m.alvo - m.atual) / meses, m.moeda)} por mês até ${dataCurta(m.prazo)}`;
     }
+    const F = (v) => fmtMoeda(v, m.moeda);
+    const eq = m.moeda === "BRL" ? `<div class="row"><span>≈ ${fmt(paraEUR(m.alvo - m.atual))} em falta ao câmbio atual</span></div>` : "";
     return `<div class="card meta-card">
       <div class="card-head"><h3>${esc(m.nome)}</h3>
         <span><button class="icon-btn" data-editar-meta="${esc(m.id)}" title="Editar">✏️</button><button class="icon-btn" data-remover-meta="${esc(m.id)}" title="Remover">🗑️</button></span></div>
-      <div class="big">${fmt(m.atual)} <span class="muted" style="font-size:15px;font-weight:400">de ${fmt(m.alvo)}</span></div>
+      <div class="big">${F(m.atual)} <span class="muted" style="font-size:15px;font-weight:400">de ${F(m.alvo)}</span></div>
       <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="row"><span>${Math.round(pct)}% concluído</span><span>Faltam ${fmt(Math.max(0, m.alvo - m.atual))}</span></div>
+      <div class="row"><span>${Math.round(pct)}% concluído</span><span>Faltam ${F(Math.max(0, m.alvo - m.atual))}</span></div>
+      ${eq}
       ${ritmo ? `<div class="row"><span>${ritmo}</span></div>` : ""}
       ${m.nota ? `<p class="muted small">${esc(m.nota)}</p>` : ""}
-      <form class="add" data-aporte="${esc(m.id)}"><input type="number" step="0.01" placeholder="Valor a adicionar €" required><button class="btn btn-sm" type="submit">+ Adicionar</button></form>
+      <form class="add" data-aporte="${esc(m.id)}"><input type="number" step="0.01" placeholder="Valor a adicionar ${m.moeda === "BRL" ? "R$" : "€"}" required><button class="btn btn-sm" type="submit">+ Adicionar</button></form>
     </div>`;
   }).join("") || `<div class="card"><p class="empty">Crie a sua primeira meta abaixo — ex.: fundo de emergência ou quitar um crédito.</p></div>`;
 }
@@ -382,6 +432,8 @@ function renderDados() {
   const ini = state.config.saldoInicial || {};
   if (document.activeElement !== $("s-valor")) $("s-valor").value = ini.data ? ini.valor : "";
   if (document.activeElement !== $("s-data")) $("s-data").value = ini.data || "";
+  const c = state.config.cambio || {};
+  $("cambio-info").innerHTML = `<strong style="font-size:20px">1 € = ${fmtTaxa(cambio())}</strong> <span class="muted small">${c.data ? `${esc(c.fonte || "manual")} · ${esc(c.data)}` : "valor da planilha (ainda não atualizado)"}</span>`;
   $("u-nome").value = (JSON.parse(localStorage.getItem(USER_KEY) || "{}").username) || "";
 }
 
@@ -392,9 +444,9 @@ function baixar(nome, conteudo, tipo) {
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function exportarCSV() {
-  const linhas = [["Data", "Tipo", "Descrição", "Categoria", "Valor", "Vencimento", "Nota"]];
+  const linhas = [["Data", "Tipo", "Descrição", "Categoria", "Valor €", "Valor R$", "Vencimento", "Nota"]];
   [...state.transacoes].sort((a, b) => a.data.localeCompare(b.data)).forEach(t =>
-    linhas.push([t.data, t.tipo, t.descricao, t.categoria, String(t.valor).replace(".", ","), t.vencimento || "", t.nota]));
+    linhas.push([t.data, t.tipo, t.descricao, t.categoria, String(t.valor).replace(".", ","), t.valorBRL ? String(t.valorBRL).replace(".", ",") : "", t.vencimento || "", t.nota]));
   const csv = linhas.map(l => l.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
   baixar(`impactfinance-${hojeISO()}.csv`, "﻿" + csv, "text/csv;charset=utf-8");
 }
@@ -417,11 +469,12 @@ async function importar() {
       i === -1 ? state.orcamentos.push(item) : (state.orcamentos[i] = item);
     });
     (dados.metas || []).forEach(m => {
-      const item = { id: String(m.id || uid()), nome: String(m.nome), alvo: Number(m.alvo) || 0, atual: Number(m.atual) || 0, prazo: m.prazo || "", nota: m.nota || "" };
+      const item = normalizarMeta(m);
       const i = state.metas.findIndex(x => x.id === item.id);
       i === -1 ? state.metas.push(item) : (state.metas[i] = item);
     });
     if (dados.config && dados.config.saldoInicial) state.config.saldoInicial = dados.config.saldoInicial;
+    aplicarCambio();
     salvar();
     const meses = [...new Set(tx.map(t => mesDe(t.data)))].sort();
     if (meses.length) {
@@ -446,6 +499,7 @@ function mostrarView(v) {
 }
 function render() {
   $("mes-label").textContent = nomeMes(mesAtual);
+  $("fx-pill").textContent = `1 € = ${fmtTaxa(cambio())}`;
   if (viewAtual === "dashboard") renderDashboard();
   if (viewAtual === "lancamentos") renderLancamentos();
   if (viewAtual === "orcamento") renderOrcamento();
@@ -509,7 +563,7 @@ $("orcamento-lista").addEventListener("click", (e) => {
 
 $("form-meta").addEventListener("submit", (e) => {
   e.preventDefault();
-  const item = { nome: $("m-nome").value.trim(), alvo: Number($("m-alvo").value) || 0, atual: Number($("m-atual").value) || 0, prazo: $("m-prazo").value, nota: $("m-nota").value.trim() };
+  const item = { moeda: $("m-moeda").value, nome: $("m-nome").value.trim(), alvo: Number($("m-alvo").value) || 0, atual: Number($("m-atual").value) || 0, prazo: $("m-prazo").value, nota: $("m-nota").value.trim() };
   if (editandoMetaId) Object.assign(state.metas.find(m => m.id === editandoMetaId), item);
   else state.metas.push({ id: uid(), ...item });
   salvar(); limparFormMeta(); renderMetas(); toast("Meta guardada.");
@@ -519,7 +573,7 @@ $("metas-lista").addEventListener("click", (e) => {
   const ed = e.target.closest("[data-editar-meta]"), rm = e.target.closest("[data-remover-meta]");
   if (ed) {
     const m = state.metas.find(x => x.id === ed.dataset.editarMeta);
-    $("m-nome").value = m.nome; $("m-alvo").value = m.alvo; $("m-atual").value = m.atual; $("m-prazo").value = m.prazo || ""; $("m-nota").value = m.nota || "";
+    $("m-moeda").value = m.moeda || "EUR"; $("m-nome").value = m.nome; $("m-alvo").value = m.alvo; $("m-atual").value = m.atual; $("m-prazo").value = m.prazo || ""; $("m-nota").value = m.nota || "";
     editandoMetaId = m.id; $("m-salvar").textContent = "Guardar meta"; $("meta-form-titulo").textContent = "Editar meta"; $("m-cancelar").hidden = false;
     $("form-meta").scrollIntoView({ behavior: "smooth" });
   }
@@ -529,10 +583,21 @@ $("metas-lista").addEventListener("submit", (e) => {
   const f = e.target.closest("form[data-aporte]"); if (!f) return;
   e.preventDefault();
   const m = state.metas.find(x => x.id === f.dataset.aporte), v = Number(f.querySelector("input").value);
-  if (m && v) { m.atual = Math.max(0, (m.atual || 0) + v); salvar(); renderMetas(); toast(`${fmt(v)} adicionado a "${m.nome}".`); }
+  if (m && v) { m.atual = Math.max(0, (m.atual || 0) + v); salvar(); renderMetas(); toast(`${fmtMoeda(v, m.moeda)} adicionado a "${m.nome}".`); }
 });
 
 $("btn-importar").addEventListener("click", importar);
+$("f-valor").addEventListener("input", atualizarConv);
+$("f-moeda").addEventListener("change", atualizarConv);
+$("btn-cambio").addEventListener("click", () => atualizarCambio(true));
+$("fx-pill").addEventListener("click", () => mostrarView("dados"));
+$("form-cambio").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = Number($("c-valor").value); if (!(v > 0)) return;
+  state.config.cambio = { valor: v, data: hojeISO(), fonte: "manual" };
+  const n = aplicarCambio(); salvar(); render(); e.target.reset();
+  toast(`Cotação manual guardada${n ? ` · ${n} lançamento(s) recalculado(s)` : ""}.`);
+});
 $("btn-export-json").addEventListener("click", () => baixar(`impactfinance-${hojeISO()}.json`, JSON.stringify(state, null, 1), "application/json"));
 $("btn-export-csv").addEventListener("click", exportarCSV);
 $("form-saldo").addEventListener("submit", (e) => {
@@ -555,3 +620,4 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js").catch(console.error));
 }
 localStorage.getItem(SESSION_KEY) === "true" ? mostrarApp() : mostrarLogin();
+if (!String(state.config.cambio?.data || "").startsWith(hojeISO()) && state.config.cambio?.fonte !== "manual") atualizarCambio(false);

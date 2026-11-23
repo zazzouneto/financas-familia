@@ -43,6 +43,7 @@
       <h2 id="mes-label">—</h2>
       <button class="btn btn-ghost btn-icon" id="mes-seguinte" aria-label="Mês seguinte">›</button>
       <button class="btn btn-ghost btn-sm" id="mes-hoje">Hoje</button>
+      <span class="fx-pill" id="fx-pill" title="Cotação usada para converter reais em euros">—</span>
     </div>
 
     <!-- RESUMO -->
@@ -94,7 +95,7 @@
           <label>Data<input type="date" id="f-data" required></label>
           <label>Descrição<input type="text" id="f-descricao" placeholder="Ex.: Luz" required></label>
           <label>Categoria<input type="text" id="f-categoria" list="lista-categorias" placeholder="Ex.: Contas Casa" required></label>
-          <label>Valor (€)<input type="number" step="0.01" min="0" id="f-valor" placeholder="0,00" required></label>
+          <label>Valor<span class="money"><select id="f-moeda"><option value="EUR">€</option><option value="BRL">R$</option></select><input type="number" step="0.01" min="0" id="f-valor" placeholder="0,00" required></span><small id="f-conv" class="muted"></small></label>
           <label>Dia de vencimento<input type="number" min="1" max="31" id="f-vencimento" placeholder="opcional"></label>
           <label class="check"><input type="checkbox" id="f-recorrente"> Repetir todos os meses (12 meses)</label>
           <div class="form-actions">
@@ -146,8 +147,9 @@
         <div class="card-head"><h3 id="meta-form-titulo">Nova meta</h3></div>
         <form id="form-meta" class="form-grid">
           <label>Nome<input type="text" id="m-nome" placeholder="Ex.: Fundo de emergência" required></label>
-          <label>Valor alvo (€)<input type="number" step="0.01" min="0" id="m-alvo" required></label>
-          <label>Já guardado / pago (€)<input type="number" step="0.01" min="0" id="m-atual" value="0"></label>
+          <label>Moeda<select id="m-moeda"><option value="EUR">Euro (€)</option><option value="BRL">Real (R$)</option></select></label>
+          <label>Valor alvo<input type="number" step="0.01" min="0" id="m-alvo" required></label>
+          <label>Já guardado / pago<input type="number" step="0.01" min="0" id="m-atual" value="0"></label>
           <label>Prazo<input type="date" id="m-prazo"></label>
           <label class="wide">Notas<input type="text" id="m-nota" placeholder="opcional"></label>
           <div class="form-actions">
@@ -179,6 +181,15 @@
         </div>
       </div>
       <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h3>Câmbio euro → real</h3><button class="btn btn-sm" id="btn-cambio">Atualizar agora</button></div>
+          <p class="muted">Usado para converter lançamentos e metas em reais. Atualiza sozinho uma vez por dia (fonte: AwesomeAPI). Lançamentos em reais do mês atual em diante são recalculados; os de meses passados ficam com a cotação da época.</p>
+          <p id="cambio-info"></p>
+          <form id="form-cambio" class="inline-form">
+            <input type="number" step="0.0001" min="0" id="c-valor" placeholder="R$ por 1 €" required>
+            <button class="btn" type="submit">Usar cotação manual</button>
+          </form>
+        </div>
         <div class="card">
           <div class="card-head"><h3>Saldo inicial</h3></div>
           <p class="muted">Saldo da conta numa data de referência. O saldo previsto soma os lançamentos a partir desta data.</p>
