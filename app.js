@@ -855,6 +855,83 @@ function renderProgressoPlanos() {
   $("pp-resumo").textContent = `${feitos} de ${itens.length} concluídos`;
 }
 
+/* ---------- Painel diário (página para o resumo das 8h) ---------- */
+async function painelDiario() {
+  const hoje = hojeISO(), mesH = mesDe(hoje), fim7 = somarDias(hoje, 7);
+  const e = (x) => esc(x);
+  // câmbio: hoje + 30 dias
+  let fx = { bid: cambio(), pct: null, var: null, hist: [] };
+  try {
+    const [last, hist] = await Promise.all([
+      fetch(CAMBIO_API, { cache: "no-store" }).then(r => r.json()),
+      fetch("https://economia.awesomeapi.com.br/json/daily/EUR-BRL/30", { cache: "no-store" }).then(r => r.json()),
+    ]);
+    fx.bid = Number(last.EURBRL.bid); fx.pct = Number(last.EURBRL.pctChange); fx.var = Number(last.EURBRL.varBid);
+    fx.hist = hist.map(h => ({ t: Number(h.timestamp) * 1000, v: Number(h.bid) })).filter(h => h.v > 0).sort((a, b) => a.t - b.t);
+    if (Math.abs(fx.bid - cambio()) > 0.0001) { state.config.cambioAnterior = { ...state.config.cambio }; state.config.cambio = { valor: Math.round(fx.bid * 10000) / 10000, data: last.EURBRL.create_date, fonte: "AwesomeAPI" }; aplicarCambio(); salvar(); }
+  } catch (err) { console.warn("câmbio", err); }
+  const salBRL = state.transacoes.filter(t => t.valorBRL && t.tipo === "receita" && /sal[áa]rio/i.test(t.descricao) && mesDe(t.data) === somarMeses(mesH, 1)).reduce((a, t) => a + t.valorBRL, 0);
+  const sr = temSaldoReal() ? state.config.saldoReal.valor : null, prevFim = saldoPrevisto(fimDoMes(mesH));
+  const prox = state.transacoes.filter(t => !t.pago && dataVenc(t) <= fim7 && t.data >= `${mesH}-01`).sort((a, b) => dataVenc(a).localeCompare(dataVenc(b)) || (a.tipo === "receita" ? -1 : 1));
+  const atras = prox.filter(t => dataVenc(t) < hoje);
+  const { ins } = calcularInsights();
+  const alertas = ins.filter(i => i.tom === "alto" || i.tom === "medio").slice(0, 5);
+  const metas = state.metas.filter(m => m.alvo > 0).map(m => { const p = progressoMeta(m); return { nome: m.nome, pct: Math.max(0, Math.min(100, (p.atual / m.alvo) * 100)), fim: p.quitacao }; }).sort((a, b) => b.pct - a.pct);
+  const doy = Math.floor((Date.parse(hoje) - Date.parse(hoje.slice(0, 4) + "-01-01")) / 864e5);
+  const dia = new Date().toLocaleDateString("pt-PT", { weekday: "long", day: "numeric", month: "long" });
+  const fmtR = (v) => "R$ " + Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+  // sparkline do câmbio
+  let spark = "";
+  if (fx.hist.length > 1) {
+    const W = 560, H = 120, vs = fx.hist.map(h => h.v), mn = Math.min(...vs), mx = Math.max(...vs), rg = mx - mn || 1;
+    const X = i => 8 + (i / (vs.length - 1)) * (W - 16), Y = v => 10 + (1 - (v - mn) / rg) * (H - 30);
+    const d = vs.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join("");
+    spark = `<svg viewBox="0 0 ${W} ${H}" class="spark" role="img" aria-label="Euro em reais, últimos 30 dias"><path d="${d} L${X(vs.length - 1)},${H - 20} L${X(0)},${H - 20}Z" fill="rgba(0,224,122,.12)"/><path d="${d}" fill="none" stroke="#00e07a" stroke-width="2.5"/><circle cx="${X(vs.length - 1)}" cy="${Y(vs[vs.length - 1])}" r="4" fill="#00e07a"/><text x="8" y="${H - 4}">mín ${fmtR(mn)}</text><text x="${W - 8}" y="${H - 4}" text-anchor="end">máx ${fmtR(mx)}</text></svg>`;
+  }
+  const corPct = fx.pct == null ? "" : fx.pct > 0 ? "neg" : "pos"; // euro mais caro = pior para quem recebe em reais? (melhor: cada real vale menos) → para o salário em R$, euro a subir é mau
+  const linhaMov = (t) => { const dv = dataVenc(t), rec = t.tipo === "receita"; return `<tr class="${dv < hoje ? "atr" : ""}"><td>${dv.slice(8)}/${dv.slice(5, 7)}${dv < hoje ? " ⚠" : ""}</td><td>${e(t.descricao)}</td><td class="num ${rec ? "pos" : "neg"}">${rec ? "+" : "−"}${e(fmt(t.valor))}</td></tr>`; };
+  const html = `<!DOCTYPE html><html lang="pt-PT"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Painel do dia</title>
+<style>
+/* VOICE: calma, direta, de quem tem um plano. IDEA: o boletim da manhã de um banco familiar. PICTURE: o saldo e o câmbio grandes no topo. COLOUR: noite verde-escura do app, verde e vermelho só para dinheiro. TYPE: sistema, números tabulares. LAYOUT: cartões em grelha que empilham no telemóvel. */
+:root{color-scheme:light dark;--bg:light-dark(#f4f7f5,#0b0f0d);--card:light-dark(#fff,#131a17);--ink:light-dark(#0e1512,#e8efeb);--mut:light-dark(#5b6b63,#8a9b93);--line:light-dark(#dfe7e2,#25312c);--pos:light-dark(#0a8f52,#2fd38a);--neg:light-dark(#c62f2f,#ff6b6b);--warn:light-dark(#a36a00,#f5b041)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif;overflow-x:clip}
+.wrap{max-width:1000px;margin:0 auto;padding:clamp(18px,4vw,40px) max(4vw,14px)}
+h1{font-size:clamp(26px,4.4vw,40px);line-height:1.08;margin:0 0 6px;text-wrap:balance}.sub{color:var(--mut);margin:0 0 22px;text-transform:capitalize}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+.card h2{font-size:15px;margin:0 0 10px;color:var(--mut);font-weight:600}.big{font-size:clamp(28px,5vw,40px);font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.pos{color:var(--pos)}.neg{color:var(--neg)}.mut{color:var(--mut)}.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:15px}td{padding:7px 4px;border-bottom:1px solid var(--line)}tr:last-child td{border-bottom:0}tr.atr td{color:var(--neg)}
+.spark{width:100%;height:auto;display:block}.spark text{fill:var(--mut);font-size:12px}
+ul{margin:0;padding-left:0;list-style:none;display:grid;gap:8px}li{font-size:15px}
+.bar{height:8px;background:var(--line);border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:var(--pos)}.mrow{display:grid;gap:4px;padding:6px 0}.mtop{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+.dica{border-left:3px solid var(--pos);padding:6px 12px;color:var(--mut);margin-top:14px}a{color:var(--pos)}
+.foot{color:var(--mut);font-size:13px;margin-top:18px}
+</style></head><body><div class="wrap">
+<h1>${prevFim >= 0 ? `Mês no azul: ${e(fmt(prevFim))} previstos no fim de ${MESES[Number(mesH.slice(5)) - 1]}` : `Atenção: ${e(fmt(prevFim))} previstos no fim de ${MESES[Number(mesH.slice(5)) - 1]}`}</h1>
+<p class="sub">${e(dia)} · ${prox.length} movimento(s) nos próximos 7 dias${atras.length ? ` · ${atras.length} atrasado(s)` : ""}</p>
+<div class="grid">
+ <div class="card"><h2>Saldo real na conta</h2><div class="big ${sr != null && sr < 0 ? "neg" : ""}">${sr != null ? e(fmt(sr)) : "—"}</div><div class="mut">Previsto no fim do mês: <strong class="${prevFim < 0 ? "neg" : "pos"}">${e(fmt(prevFim))}</strong></div></div>
+ <div class="card"><h2>Euro hoje</h2><div class="big">${e(fmtR(fx.bid))}</div><div class="mut">${fx.pct != null ? `<strong class="${corPct}">${fx.pct > 0 ? "▲" : fx.pct < 0 ? "▼" : "="} ${Math.abs(fx.pct).toFixed(2).replace(".", ",")}%</strong> desde ontem` : "sem variação disponível"}${salBRL ? ` · salário de ${e(fmtBRL(salBRL))} ≈ <strong>${e(fmt(salBRL / fx.bid))}</strong>` : ""}</div>${spark}</div>
+</div>
+<div class="grid" style="margin-top:14px">
+ <div class="card"><h2>Próximos 7 dias</h2>${prox.length ? `<table>${prox.map(linhaMov).join("")}</table>` : `<p class="mut">Nada previsto. 🎉</p>`}</div>
+ <div class="card"><h2>Alertas do conselheiro</h2>${alertas.length ? `<ul>${alertas.map(i => `<li>${i.ic} ${i.txt}</li>`).join("")}</ul>` : `<p class="mut">Sem alertas. Tudo dentro do plano.</p>`}</div>
+</div>
+<div class="card" style="margin-top:14px"><h2>Cumprimento dos planos</h2>${metas.map(m => `<div class="mrow"><div class="mtop"><span>${e(m.nome)}</span><span>${Math.round(m.pct)}%${m.fim && m.pct < 99.95 ? ` · ${e(nomeMes(mesDe(m.fim)))}` : ""}</span></div><div class="bar"><i style="width:${m.pct}%"></i></div></div>`).join("")}</div>
+<div class="dica">💡 <strong>Dica do dia:</strong> ${DICAS[doy % DICAS.length]}</div>
+<p class="foot">Gerado às ${new Date().toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })} a partir do app Finanças Família · câmbio AwesomeAPI · <a href="https://zazzouneto.github.io/financas-familia/">abrir o app</a> para confirmar pagamentos.</p>
+</div></body></html>`;
+  const txt = (s) => String(s).replace(/<[^>]+>/g, "");
+  const resumo = [
+    `Saldo real ${sr != null ? fmt(sr) : "—"} · fim de ${MESES[Number(mesH.slice(5)) - 1]} ${fmt(prevFim)}`,
+    `Euro ${fmtR(fx.bid)}${fx.pct != null ? ` (${fx.pct > 0 ? "+" : ""}${fx.pct.toFixed(2).replace(".", ",")}% desde ontem)` : ""}`,
+    prox.length ? `Próximos 7 dias: ${prox.slice(0, 6).map(t => `${dataVenc(t).slice(8)}/${dataVenc(t).slice(5, 7)} ${t.descricao} ${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}`).join("; ")}` : "Próximos 7 dias: nada previsto",
+    ...alertas.slice(0, 3).map(i => "⚠ " + txt(i.txt)),
+  ].join("\n");
+  return { html, resumo };
+}
+
 /* ---------- Conselheiro de investimentos ---------- */
 const INV_DESC = "Investimento mensal";
 function renderInvestir() {
