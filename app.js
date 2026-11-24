@@ -724,7 +724,7 @@ function progressoMeta(m) {
 
 function renderMetas() {
   const hoje = hojeISO();
-  renderRumo();
+  renderProgressoPlanos(); renderRumo(); renderInvestir();
   $("metas-lista").innerHTML = state.metas.map(m => {
     if (m.tipo === "financiamento") return cardFinanciamento(m);
     const F = (v) => fmtMoeda(v, m.moeda);
@@ -836,6 +836,81 @@ function renderRumo() {
   if (abertos.length) { st.className = "cons-score atencao"; st.textContent = `${abertos.length} sem data de fim`; }
   else if (livre <= META_LIVRE) { st.className = "cons-score bom"; st.textContent = `Sem dívidas em ${nomeMes(livre)}`; }
   else { st.className = "cons-score atencao"; st.textContent = `Sem dívidas em ${nomeMes(livre)} (meta: 2032)`; }
+}
+
+/* ---------- Cumprimento dos planos ---------- */
+function renderProgressoPlanos() {
+  if (!$("pp-lista")) return;
+  const itens = state.metas.filter(m => m.alvo > 0).map(m => {
+    const p = progressoMeta(m), F = (v) => fmtMoeda(v, m.moeda);
+    const pct = Math.max(0, Math.min(100, (p.atual / m.alvo) * 100));
+    const sub = pct >= 99.95 ? "Concluído 🎉" : `${F(p.atual)} de ${F(m.alvo)}${p.quitacao ? ` · termina em ${nomeMes(mesDe(p.quitacao))}` : ""}`;
+    return { nome: m.nome, pct, sub };
+  }).sort((a, b) => b.pct - a.pct);
+  $("pp-lista").innerHTML = itens.map(i => `<div class="pp-row ${i.pct >= 99.95 ? "feito" : ""}">
+      <div class="pp-top"><span>${esc(i.nome)}</span><span class="pp-pct">${Math.round(i.pct)}%</span></div>
+      <div class="bar ${i.pct >= 99.95 ? "" : i.pct < 25 ? "warn" : ""}"><i style="width:${i.pct}%"></i></div>
+      <span class="pp-sub">${i.sub}</span></div>`).join("") || `<p class="empty">Sem metas.</p>`;
+  const feitos = itens.filter(i => i.pct >= 99.95).length;
+  $("pp-resumo").textContent = `${feitos} de ${itens.length} concluídos`;
+}
+
+/* ---------- Conselheiro de investimentos ---------- */
+const INV_DESC = "Investimento mensal";
+function renderInvestir() {
+  if (!$("investir")) return;
+  const hoje = hojeISO(), mesH = mesDe(hoje);
+  const inv = state.transacoes.filter(t => t.descricao.startsWith(INV_DESC)).sort((a, b) => a.data.localeCompare(b.data));
+  const pagos = inv.filter(t => t.pago), total = pagos.reduce((a, t) => a + t.valor, 0);
+  const atual = inv.find(t => mesDe(t.data) === mesH) || inv.find(t => t.data >= hoje);
+  $("inv-total").textContent = fmt(total);
+  $("inv-mes").textContent = atual ? fmt(atual.valor) : "—";
+  // meses seguidos com investimento confirmado (até ao mês atual)
+  let seq = 0; for (let ym = mesH; ; ym = somarMeses(ym, -1)) { const t = inv.find(x => mesDe(x.data) === ym); if (t && t.pago) seq++; else if (ym !== mesH || (t && !t.pago && dataVenc(t) < hoje)) break; if (seq > 600) break; }
+  $("inv-seq").textContent = String(seq);
+  // fase conforme as dívidas
+  const fins = state.metas.filter(m => m.tipo === "financiamento").map(m => ({ m, q: progressoFinanciamento(m).quitacao }));
+  const caras = fins.filter(x => x.m.taxa >= 0.8 && (!x.q || x.q > hoje));
+  const hip = fins.find(x => /hipoteca/i.test(x.m.nome));
+  let fase, cls, dicas = [];
+  const fimCaras = caras.length ? caras.map(x => x.q || HORIZONTE).sort().pop() : null;
+  if (caras.length) {
+    fase = "Fase 1 · criar o hábito"; cls = "atencao";
+    dicas.push(["🌱", `Agora o objetivo é a <strong>constância</strong>, não o retorno: ${atual ? fmt(atual.valor) : "um valor fixo"} todos os meses, sem falhar.`]);
+    dicas.push(["⚖️", `Ainda há dívidas a ${caras.map(x => `${String(x.m.taxa).replace(".", ",")}% a.m.`).join(" e ")} — pagar dívida é um "retorno" garantido maior do que qualquer investimento seguro. Por isso o valor fica pequeno até ${fimCaras ? nomeMes(mesDe(fimCaras)) : "as quitar"}.`]);
+    dicas.push(["🛡️", "Com dinheiro que pode precisar a curto prazo, prefira algo <strong>sem risco de perda</strong> (conta remunerada, Certificados de Aforro). Ações/ETF só para dinheiro que não vai tocar durante 5+ anos."]);
+  } else if (hip && (!hip.q || hip.q > hoje)) {
+    fase = "Fase 2 · acelerar"; cls = "bom";
+    dicas.push(["🚀", "As dívidas caras acabaram. Pode subir o investimento mensal — por exemplo, dividir a sobra entre amortizar a hipoteca e investir."]);
+    dicas.push(["🌍", "Para 5+ anos, um ETF de ações globais diversificado e de baixo custo é o caminho mais comum; reveja e reequilibre uma vez por ano."]);
+  } else {
+    fase = "Fase 3 · construir património"; cls = "bom";
+    dicas.push(["🏁", "Sem dívidas: a sobra mensal pode ir quase toda para investimento de longo prazo, mantendo a reserva de emergência."]);
+  }
+  if (atual && !atual.pago) dicas.unshift(["📅", `Investimento deste mês (${fmt(atual.valor)}) ainda por confirmar.`, `<button class="btn btn-sm" data-confirmar="${esc(atual.id)}">Feito ✓</button>`]);
+  dicas.push(["🧾", "Em Portugal, ganhos e juros pagam em regra 28% de IRS; numa corretora estrangeira terá de declarar no Anexo J."]);
+  const f = $("inv-fase"); f.className = "cons-score " + cls; f.textContent = fase;
+  $("inv-dicas").innerHTML = dicas.map(([ic, txt, acao]) => `<li class="info"><span class="ic">${ic}</span><span>${txt}</span>${acao ? `<span class="acao">${acao}</span>` : ""}</li>`).join("");
+  // simulação até 2045
+  const meses = []; for (let ym = inv.length ? mesDe(inv[0].data) : mesH; ym <= HORIZONTE; ym = somarMeses(ym, 1)) meses.push(ym);
+  const cen = [0, 0.025, 0.07].map(a => { let v = 0; const r = Math.pow(1 + a, 1 / 12) - 1; return meses.map(ym => { v = v * (1 + r) + inv.filter(t => mesDe(t.data) === ym).reduce((s, t) => s + t.valor, 0); return v; }); });
+  const W = 900, H = 200, pl = 46, pr = 70, pt = 10, pb = 24, max = Math.max(1, ...cen[2]);
+  const X = i => pl + (i / Math.max(1, meses.length - 1)) * (W - pl - pr), Y = v => pt + (1 - v / max) * (H - pt - pb);
+  let g = "";
+  for (let k = 0; k <= 4; k++) { const v = (k * max) / 4; g += `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--border)" stroke-dasharray="2 4"/><text x="${pl - 6}" y="${Y(v) + 3}" text-anchor="end">${v >= 1000 ? Math.round(v / 1000) + "k" : Math.round(v)}</text>`; }
+  meses.forEach((ym, i) => { if (ym.endsWith("-01") && Number(ym.slice(0, 4)) % 2 === 0) g += `<text x="${X(i)}" y="${H - 6}" text-anchor="middle">${ym.slice(0, 4)}</text>`; });
+  const cores = ["var(--muted)", "var(--c2)", "var(--pos)"];
+  cen.forEach((c, k) => { g += `<path d="${c.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join("")}" fill="none" stroke="${cores[k]}" stroke-width="2"/><text x="${W - pr + 6}" y="${Y(c[c.length - 1]) + 4}" style="fill:${cores[k]};font-weight:600">${fmt(c[c.length - 1]).replace(/,\d\d/, "")}</text>`; });
+  $("inv-chart").innerHTML = meses.length > 1 ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Simulação de investimentos">${g}</svg>` : `<p class="empty">Ainda sem investimentos planeados.</p>`;
+}
+async function conversarInvestimentos() {
+  const inv = state.transacoes.filter(t => t.descricao.startsWith(INV_DESC));
+  const pagos = inv.filter(t => t.pago).reduce((a, t) => a + t.valor, 0);
+  const fins = state.metas.filter(m => m.tipo === "financiamento").map(m => `${m.nome} ${String(m.taxa).replace(".", ",")}% a.m. (quitação ${progressoFinanciamento(m).quitacao || "?"})`).join("; ");
+  const txt = `Investidor iniciante em Portugal: quero orientação para investir. Invisto ${inv[0] ? fmt(inv[0].valor) : "€10"}/mês desde ${inv[0] ? nomeMes(mesDe(inv[0].data)) : "novembro 2026"}; já investido e confirmado: ${fmt(pagos)}. Tenho reserva de emergência em construção e estas dívidas: ${fins}. Onde devo pôr estes valores agora e como evoluir o plano quando as dívidas acabarem?`;
+  try { await navigator.clipboard.writeText(txt); } catch (e) {}
+  window.open("https://claude.ai/new?q=" + encodeURIComponent(txt), "_blank", "noopener");
+  toast("Resumo copiado. Se o Claude abrir vazio, cole (Ctrl+V) e envie.");
 }
 
 function cardFinanciamento(m) {
@@ -1077,6 +1152,7 @@ $("cons-mais").addEventListener("click", () => { consMostrarTodos = !consMostrar
 $("cons-fechar").addEventListener("click", () => alternarConselheiro(false));
 $("cons-toggle").addEventListener("click", () => alternarConselheiro());
 $("cons-claude").addEventListener("click", conversarComConselheiro);
+$("inv-claude").addEventListener("click", conversarInvestimentos);
 $("cons-lista").addEventListener("click", (e) => {
   if (e.target.closest("[data-acao-cons=saldo]")) editarSaldoReal();
   if (e.target.closest("[data-backup]")) exportarJSON();

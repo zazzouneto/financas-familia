@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=14">
+  <link rel="stylesheet" href="styles.css?v=15">
 </head>
 <body>
 
@@ -147,12 +147,29 @@
 
     <!-- METAS -->
     <section class="view" id="view-metas" hidden>
+      <div class="card" id="progresso-planos">
+        <div class="card-head"><h3>Cumprimento dos planos</h3><span class="muted small" id="pp-resumo"></span></div>
+        <div id="pp-lista" class="pp-lista"></div>
+      </div>
       <div class="card" id="rumo">
         <div class="card-head"><h3>Rumo a 2032 sem dívidas <span class="muted small">· projeção até 2045</span></h3><span class="cons-score" id="rumo-status">—</span></div>
         <div class="legend"><i class="dot" style="background:var(--neg)"></i>Dívidas e parcelas restantes <i class="dot" style="background:var(--pos)"></i>Reserva de emergência <i class="dot" style="background:var(--c2)"></i>Saldo da conta</div>
         <div id="rumo-chart" class="chart"></div>
         <ul id="rumo-dividas" class="rumo-lista"></ul>
         <p class="muted small">Projeção com os lançamentos do app (parcelas e recorrentes) e as metas. Valores em reais convertidos ao câmbio de hoje. Dívidas sem data de fim aparecem a amarelo — edite a série em Lançamentos para terminar no mês certo.</p>
+      </div>
+      <div class="card" id="investir">
+        <div class="card-head"><h3>📈 Conselheiro de investimentos</h3><span class="cons-score" id="inv-fase">—</span></div>
+        <div class="inv-topo">
+          <div><span class="sb-label">Investido (confirmado)</span><strong class="sb-valor" id="inv-total">—</strong></div>
+          <div><span class="sb-label">Por mês agora</span><strong class="sb-valor sb-sec" id="inv-mes">—</strong></div>
+          <div><span class="sb-label">Meses seguidos</span><strong class="sb-valor sb-sec" id="inv-seq">—</strong></div>
+        </div>
+        <ul class="cons-lista" id="inv-dicas"></ul>
+        <div class="legend"><i class="dot" style="background:var(--muted)"></i>Só o que investe (0%) <i class="dot" style="background:var(--c2)"></i>Prudente (2,5%/ano) <i class="dot" style="background:var(--pos)"></i>Ações globais, longo prazo (7%/ano, sem garantia)</div>
+        <div id="inv-chart" class="chart"></div>
+        <p class="muted small">Simulação educativa com os investimentos planeados no app, antes de impostos (28% sobre os ganhos em Portugal) e comissões. Retornos passados não garantem futuros. Não é aconselhamento financeiro.</p>
+        <div class="cons-acoes"><button class="btn btn-sm btn-primary" id="inv-claude">💬 Conversar sobre investimentos</button></div>
       </div>
       <div id="metas-lista" class="metas-grid"></div>
       <div class="card">
@@ -261,6 +278,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>

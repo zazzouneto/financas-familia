@@ -311,3 +311,13 @@ details.plano tr.pago td { opacity: .5; }
 .rumo-lista li.aberto { border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .rumo-lista li.aberto .fim { color: var(--warn); }
 #rumo-chart svg text { font-size: 10px; }
+
+.inv-topo { display: flex; gap: 28px; flex-wrap: wrap; }
+.inv-topo > div { display: grid; }
+
+.pp-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 4px 28px; }
+.pp-row { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.pp-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 14px; }
+.pp-pct { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pp-sub { font-size: 12px; color: var(--muted); }
+.pp-row.feito .pp-pct { color: var(--pos); }
