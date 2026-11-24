@@ -321,3 +321,11 @@ details.plano tr.pago td { opacity: .5; }
 .pp-pct { font-weight: 700; font-variant-numeric: tabular-nums; }
 .pp-sub { font-size: 12px; color: var(--muted); }
 .pp-row.feito .pp-pct { color: var(--pos); }
+
+.nuvem-pill{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #2a3340;color:#9aa7b4;white-space:nowrap}
+.nuvem-pill.ok{color:#00e07a;border-color:#00e07a55}
+.nuvem-pill.sync{color:#f5c542;border-color:#f5c54255}
+.nuvem-pill.off{color:#ff6b6b;border-color:#ff6b6b55}
+@media (max-width:640px){.nuvem-pill{font-size:11px;padding:3px 8px}}
+
+.aviso-novo{background:#f5c54222;border-bottom:1px solid #f5c54266;color:#f5e6b0;padding:8px 16px;font-size:13px;text-align:center}.aviso-novo a{color:#00e07a}

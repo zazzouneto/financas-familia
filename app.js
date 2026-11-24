@@ -1,4 +1,5 @@
-/* Impact Finance — controlo financeiro (vanilla JS, dados no localStorage) */
+/* Finanças Família — controlo financeiro (vanilla JS).
+   Dados: cópia local (localStorage) + sincronização na nuvem quando corre como página do claude.ai (capability db). */
 "use strict";
 
 const STORE_KEY = "impactfinance_v2";
@@ -9,6 +10,13 @@ const MESES_CURTOS = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out
 const CORES = ["--c1","--c2","--c3","--c4","--c5","--c6","--c7","--c8"].map(v => `var(${v})`);
 
 const $ = (id) => document.getElementById(id);
+// Corre como página (artifact) do claude.ai? Aí há window.claude.use e a nuvem sincroniza entre aparelhos.
+const NO_CLAUDE = typeof window.claude === "object" && typeof window.claude?.use === "function";
+const LS = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+};
 const eur = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" });
 const fmt = (v) => eur.format(v || 0);
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -72,14 +80,14 @@ function normalizarMeta(m) {
 }
 function carregar() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = LS.get(STORE_KEY);
     if (raw) {
       const s = JSON.parse(raw);
       const base = estadoVazio();
       return { ...base, ...s, config: { ...base.config, ...(s.config || {}) }, transacoes: (s.transacoes || []).map(normalizarTransacao), metas: (s.metas || []).map(normalizarMeta) };
     }
     // migração da versão antiga (chave "transacoes")
-    const antigas = JSON.parse(localStorage.getItem("transacoes") || "[]");
+    const antigas = JSON.parse(LS.get("transacoes") || "[]");
     const s = estadoVazio();
     s.transacoes = antigas.filter(t => t && t.data).map(normalizarTransacao);
     return s;
@@ -89,7 +97,103 @@ function carregar() {
   }
 }
 let state = carregar();
-function salvar() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function salvar() { LS.set(STORE_KEY, JSON.stringify(state)); agendarNuvem(); }
+
+/* ---------- Nuvem (claude.ai): os mesmos dados no telemóvel e no computador ---------- */
+// Documentos: fin/meta (metas, config, anos, rev), fin/tx-AAAA (lançamentos do ano), fin/painel (resumo para o e-mail diário), fin/cambio (escrito pela tarefa da manhã).
+const nuvem = { db: null, rev: null, enviados: {}, gravando: false, pendente: false, timer: null, pronta: false, estado: "local" };
+function setNuvem(estado, txt) {
+  nuvem.estado = estado; const el = $("nuvem-pill"); if (!el) return;
+  el.hidden = !NO_CLAUDE; el.className = "nuvem-pill " + estado; el.textContent = txt;
+}
+function porAno(tx) { const m = {}; tx.forEach(t => { const a = t.data.slice(0, 4); (m[a] = m[a] || []).push(t); }); return m; }
+function compacto(t) { const o = {}; for (const [k, v] of Object.entries(t)) if (v !== null && v !== "" && v !== false && v !== undefined) o[k] = v; return o; }
+async function iniciarNuvem() {
+  if (!NO_CLAUDE) return;
+  setNuvem("sync", "☁️ a ligar…");
+  let db = null;
+  try { db = await window.claude.use("db"); } catch (e) { db = null; }
+  if (!db) { setNuvem("off", "⚠️ só neste aparelho"); return; }
+  nuvem.db = db;
+  const timer = setTimeout(() => { if (!nuvem.pronta) setNuvem("off", "⚠️ sem ligação à nuvem"); }, 10000);
+  db.doc("fin/meta").onSnapshot(async (snap) => {
+    if (snap.metadata && snap.metadata.hasPendingWrites) return;
+    clearTimeout(timer);
+    if (!snap.exists) {
+      nuvem.pronta = true;
+      if (state.transacoes.length || state.metas.length) { setNuvem("sync", "☁️ a enviar…"); await enviarNuvem(true); }
+      else setNuvem("ok", "☁️ nuvem vazia — importe os dados");
+      return;
+    }
+    const meta = snap.data();
+    if (meta.rev && meta.rev === nuvem.rev) { nuvem.pronta = true; setNuvem("ok", "☁️ sincronizado"); return; }
+    await carregarDaNuvem(meta);
+  }, (err) => { clearTimeout(timer); setNuvem("off", "⚠️ nuvem indisponível"); console.warn("nuvem", err); });
+  db.doc("fin/cambio").onSnapshot((snap) => {
+    if (!snap.exists) return;
+    const c = snap.data(), v = Number(c.valor);
+    if (v > 0 && Math.abs(v - cambio()) > 0.00005 && String(c.data || "") > String(state.config.cambio?.data || "")) {
+      state.config.cambioAnterior = { ...state.config.cambio };
+      state.config.cambio = { valor: v, data: c.data, fonte: c.fonte || "tarefa diária", pct: c.pct };
+      aplicarCambio(); salvar(); render();
+    }
+  }, () => {});
+}
+async function carregarDaNuvem(meta) {
+  setNuvem("sync", "☁️ a receber…");
+  try {
+    const anos = meta.anos || [];
+    const docs = await Promise.all(anos.map(a => nuvem.db.doc("fin/tx-" + a).get()));
+    const tx = []; nuvem.enviados = {};
+    docs.forEach((d, i) => { const itens = (d.exists && d.data().itens) || []; nuvem.enviados[anos[i]] = JSON.stringify(itens); itens.forEach(t => tx.push(normalizarTransacao(t))); });
+    const base = estadoVazio();
+    state = { ...base, versao: meta.versao || 2, transacoes: tx, metas: (meta.metas || []).map(normalizarMeta), orcamentos: meta.orcamentos || [], config: { ...base.config, ...(meta.config || {}) } };
+    nuvem.rev = meta.rev; nuvem.pronta = true;
+    LS.set(STORE_KEY, JSON.stringify(state));
+    if (aplicarCambio()) agendarNuvem();
+    render(); setNuvem("ok", "☁️ sincronizado");
+  } catch (e) { console.warn(e); setNuvem("off", "⚠️ erro ao receber"); }
+}
+function agendarNuvem() {
+  if (!nuvem.db || !nuvem.pronta) return;
+  clearTimeout(nuvem.timer); setNuvem("sync", "☁️ a guardar…");
+  nuvem.timer = setTimeout(() => enviarNuvem(false), 900);
+}
+async function enviarNuvem(forcar) {
+  if (!nuvem.db) return;
+  if (nuvem.gravando) { nuvem.pendente = true; return; }
+  nuvem.gravando = true;
+  try {
+    const grupos = porAno(state.transacoes), anos = Object.keys(grupos).sort();
+    for (const a of anos) {
+      const itens = grupos[a].map(compacto), js = JSON.stringify(itens);
+      if (forcar || nuvem.enviados[a] !== js) { await nuvem.db.doc("fin/tx-" + a).set({ itens }); nuvem.enviados[a] = js; }
+    }
+    for (const a of Object.keys(nuvem.enviados)) if (!grupos[a]) { await nuvem.db.doc("fin/tx-" + a).set({ itens: [] }); delete nuvem.enviados[a]; }
+    const rev = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    nuvem.rev = rev;
+    await nuvem.db.doc("fin/meta").set({ versao: state.versao || 2, metas: state.metas, orcamentos: state.orcamentos, config: state.config, anos, rev, atualizadoEm: new Date().toISOString() });
+    try { await nuvem.db.doc("fin/painel").set(resumoNuvem()); } catch (e) { console.warn("painel", e); }
+    nuvem.pronta = true; setNuvem("ok", "☁️ sincronizado");
+  } catch (e) {
+    console.warn("nuvem", e);
+    setNuvem("off", e && e.code === "quota_exceeded" ? "⚠️ nuvem cheia" : "⚠️ não guardou na nuvem");
+  } finally {
+    nuvem.gravando = false;
+    if (nuvem.pendente) { nuvem.pendente = false; enviarNuvem(false); }
+  }
+}
+// Resumo pequeno para a tarefa da manhã (que corre sem abrir o app).
+function resumoNuvem() {
+  const hoje = hojeISO(), lim = somarDias(hoje, 60);
+  const desde = state.config.saldoReal?.desde || `${mesDe(hoje)}-01`;
+  const pend = state.transacoes.filter(t => !t.pago && t.data >= desde && dataVenc(t) <= lim)
+    .map(t => ({ d: dataVenc(t), desc: t.descricao, v: t.valor, tipo: t.tipo, brl: t.valorBRL || null }))
+    .sort((a, b) => a.d.localeCompare(b.d));
+  let alertas = []; try { alertas = calcularInsights().ins.filter(i => i.tom === "alto" || i.tom === "medio").slice(0, 5).map(i => String(i.txt).replace(/<[^>]+>/g, "")); } catch (e) {}
+  const metas = state.metas.filter(m => m.alvo > 0).map(m => { const p = progressoMeta(m); return { nome: m.nome, pct: Math.round(Math.max(0, Math.min(100, (p.atual / m.alvo) * 100))), fim: p.quitacao || null }; });
+  return { geradoEm: new Date().toISOString(), saldoReal: state.config.saldoReal || null, cambio: state.config.cambio || null, pendentes: pend, alertas, metas, dicas: DICAS };
+}
 
 /* ---------- Câmbio EUR → BRL ---------- */
 const cambio = () => Number(state.config.cambio?.valor) || 6;
@@ -104,6 +208,7 @@ function aplicarCambio() {
   return n;
 }
 async function atualizarCambio(manual = false) {
+  if (NO_CLAUDE) { if (manual) toast("A cotação é atualizada todas as manhãs pela tarefa diária. Pode pôr uma manual abaixo."); return; }
   try {
     const r = await fetch(CAMBIO_API, { cache: "no-store" });
     const j = await r.json();
@@ -181,6 +286,17 @@ function abrirModal({ titulo, sub = "", campos, ok = "Confirmar", onOk }) {
   abrirModal._ok = onOk;
 }
 function fecharModal() { $("modal").hidden = true; abrirModal._ok = null; }
+
+// confirm() não funciona dentro do claude.ai: pergunta num modal próprio.
+function perguntar(texto, ok = "Sim", nao = "Cancelar") {
+  return new Promise((res) => {
+    let feito = false;
+    abrirModal({ titulo: "Confirmar", sub: "", campos: `<p style="margin:0;white-space:pre-line">${esc(texto)}</p>`, ok, onOk: () => { feito = true; res(true); } });
+    $("modal-cancelar").textContent = nao;
+    const obs = new MutationObserver(() => { if ($("modal").hidden) { obs.disconnect(); $("modal-cancelar").textContent = "Cancelar"; if (!feito) res(false); } });
+    obs.observe($("modal"), { attributes: true, attributeFilter: ["hidden"] });
+  });
+}
 
 function confirmarTransacao(id) {
   const t = state.transacoes.find(x => x.id === id); if (!t) return;
@@ -494,7 +610,7 @@ let consMostrarTodos = false;
 const CONS_KEY = "fin_conselheiro_fechado";
 function renderConselheiro() {
   const h = new Date().getHours();
-  const nome = (JSON.parse(localStorage.getItem(USER_KEY) || "{}").nome) || "Neto";
+  const nome = (JSON.parse(LS.get(USER_KEY) || "{}").nome) || "Neto";
   $("cons-saudacao").textContent = `${h < 12 ? "Bom dia" : h < 19 ? "Boa tarde" : "Boa noite"}, ${nome}!`;
   $("cons-sub").textContent = new Date().toLocaleDateString("pt-PT", { weekday: "long", day: "numeric", month: "long" });
   const { ins, score } = calcularInsights();
@@ -510,12 +626,12 @@ function renderConselheiro() {
   const badge = $("cons-badge");
   badge.hidden = !alertas.length; badge.textContent = alertas.length;
   badge.className = "cons-badge" + (ins.some(i => i.tom === "alto") ? "" : " medio");
-  $("cons-fab").classList.toggle("fechado", localStorage.getItem(CONS_KEY) === hojeISO());
+  $("cons-fab").classList.toggle("fechado", LS.get(CONS_KEY) === hojeISO());
 }
 function alternarConselheiro(abrir) {
   const fechado = $("cons-fab").classList.contains("fechado");
   const abre = abrir ?? fechado;
-  if (abre) localStorage.removeItem(CONS_KEY); else { localStorage.setItem(CONS_KEY, hojeISO()); consMostrarTodos = false; }
+  if (abre) LS.del(CONS_KEY); else { LS.set(CONS_KEY, hojeISO()); consMostrarTodos = false; }
   renderConselheiro();
 }
 
@@ -537,8 +653,12 @@ function resumoParaClaude() {
 async function conversarComConselheiro() {
   const txt = resumoParaClaude();
   try { await navigator.clipboard.writeText(txt); } catch (e) { /* sem permissão: segue só com o link */ }
-  window.open("https://claude.ai/new?q=" + encodeURIComponent(txt), "_blank", "noopener");
-  toast("Resumo copiado. Se o Claude abrir vazio, cole (Ctrl+V) e envie.");
+  abrirLinkClaude(txt);
+}
+function abrirLinkClaude(txt) {
+  const url = "https://claude.ai/new?q=" + encodeURIComponent(txt);
+  abrirModal({ titulo: "Conversar com o conselheiro", sub: "O resumo já foi copiado.", ok: "Fechar", onOk: () => true,
+    campos: `<p style="margin:0">Toque no link para abrir uma conversa nova com o resumo. Se abrir vazia, cole (Ctrl+V) e envie.</p><p><a class="btn btn-primary" href="${esc(url)}" target="_blank" rel="noopener">Abrir o Claude</a></p>` });
 }
 
 /* ---------- Render: Lançamentos ---------- */
@@ -655,18 +775,18 @@ function guardarTransacao(e) {
   salvar(); limparForm(); render();
 }
 
-function removerTransacao(id) {
+async function removerTransacao(id) {
   const t = state.transacoes.find(x => x.id === id);
   if (!t) return;
   if (t.serieId) {
     const futuros = state.transacoes.filter(x => x.serieId === t.serieId && x.data >= t.data);
-    if (futuros.length > 1 && confirm(`Este lançamento repete-se. Remover também os ${futuros.length - 1} seguintes?\n\nOK = remover este e os seguintes · Cancelar = só este`)) {
+    if (futuros.length > 1 && await perguntar(`Este lançamento repete-se. Remover também os ${futuros.length - 1} seguintes?`, "Este e os seguintes", "Só este")) {
       const ids = new Set(futuros.map(x => x.id));
       state.transacoes = state.transacoes.filter(x => !ids.has(x.id));
       salvar(); render(); toast(`${ids.size} lançamentos removidos.`); return;
     }
   }
-  if (!confirm(`Remover "${t.descricao}" (${fmt(t.valor)})?`)) return;
+  if (!await perguntar(`Remover "${t.descricao}" (${fmt(t.valor)})?`, "Remover")) return;
   state.transacoes = state.transacoes.filter(x => x.id !== id);
   salvar(); render(); toast("Lançamento removido.");
 }
@@ -986,8 +1106,12 @@ async function conversarInvestimentos() {
   const fins = state.metas.filter(m => m.tipo === "financiamento").map(m => `${m.nome} ${String(m.taxa).replace(".", ",")}% a.m. (quitação ${progressoFinanciamento(m).quitacao || "?"})`).join("; ");
   const txt = `Investidor iniciante em Portugal: quero orientação para investir. Invisto ${inv[0] ? fmt(inv[0].valor) : "€10"}/mês desde ${inv[0] ? nomeMes(mesDe(inv[0].data)) : "novembro 2026"}; já investido e confirmado: ${fmt(pagos)}. Tenho reserva de emergência em construção e estas dívidas: ${fins}. Onde devo pôr estes valores agora e como evoluir o plano quando as dívidas acabarem?`;
   try { await navigator.clipboard.writeText(txt); } catch (e) {}
-  window.open("https://claude.ai/new?q=" + encodeURIComponent(txt), "_blank", "noopener");
-  toast("Resumo copiado. Se o Claude abrir vazio, cole (Ctrl+V) e envie.");
+  abrirLinkClaude(txt);
+}
+function abrirLinkClaude(txt) {
+  const url = "https://claude.ai/new?q=" + encodeURIComponent(txt);
+  abrirModal({ titulo: "Conversar com o conselheiro", sub: "O resumo já foi copiado.", ok: "Fechar", onOk: () => true,
+    campos: `<p style="margin:0">Toque no link para abrir uma conversa nova com o resumo. Se abrir vazia, cole (Ctrl+V) e envie.</p><p><a class="btn btn-primary" href="${esc(url)}" target="_blank" rel="noopener">Abrir o Claude</a></p>` });
 }
 
 function cardFinanciamento(m) {
@@ -1033,7 +1157,7 @@ function renderDados() {
   $("backup-info").textContent = ub ? `Última cópia: ${dataCurta(ub)}` : "Ainda sem cópias de segurança.";
   const c = state.config.cambio || {};
   $("cambio-info").innerHTML = `<strong style="font-size:20px">1 € = ${fmtTaxa(cambio())}</strong> <span class="muted small">${c.data ? `${esc(c.fonte || "manual")} · ${esc(c.data)}` : "valor da planilha (ainda não atualizado)"}</span>`;
-  $("u-nome").value = (JSON.parse(localStorage.getItem(USER_KEY) || "{}").username) || "";
+  $("u-nome").value = (JSON.parse(LS.get(USER_KEY) || "{}").username) || "";
 }
 
 /* ---------- Agenda (.ics) ---------- */
@@ -1060,7 +1184,10 @@ function exportarICS() {
 }
 
 /* ---------- Import / export ---------- */
-function baixar(nome, conteudo, tipo) {
+async function baixar(nome, conteudo, tipo) {
+  if (NO_CLAUDE) {
+    try { const dl = await window.claude.use("downloads"); if (dl) { await dl.save({ filename: nome, data: new Blob([conteudo], { type: tipo }) }); return; } } catch (e) { console.warn("download", e); toast("Download cancelado ou indisponível."); return; }
+  }
   const url = URL.createObjectURL(new Blob([conteudo], { type: tipo }));
   const a = Object.assign(document.createElement("a"), { href: url, download: nome });
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -1080,7 +1207,7 @@ async function importar() {
     const dados = JSON.parse(await f.text());
     const tx = (Array.isArray(dados) ? dados : dados.transacoes || []).filter(t => t && t.data).map(normalizarTransacao);
     const substituir = $("import-substituir").checked;
-    if (substituir && !confirm("Isto apaga todos os dados atuais e substitui pelos do ficheiro. Continuar?")) return;
+    if (substituir && !await perguntar("Isto apaga todos os dados atuais e substitui pelos do ficheiro. Continuar?", "Substituir")) return;
     if (substituir) state = estadoVazio();
     const ids = new Map(state.transacoes.map((t, i) => [t.id, i]));
     let novos = 0, atualizados = 0;
@@ -1132,20 +1259,21 @@ function render() {
 }
 
 /* ---------- Login ---------- */
-if (!localStorage.getItem(USER_KEY)) localStorage.setItem(USER_KEY, JSON.stringify({ username: "admin", password: "1234" }));
-function mostrarApp() { $("login-section").hidden = true; $("app-section").hidden = false; $("cons-fab").hidden = false; limparForm(); mostrarView(viewAtual); }
+if (!LS.get(USER_KEY)) LS.set(USER_KEY, JSON.stringify({ username: "admin", password: "1234" }));
+function mostrarApp() { $("login-section").hidden = true; $("app-section").hidden = false; $("cons-fab").hidden = false; limparForm(); irParaInicio(); }
+function irParaInicio() { viewAtual = "dashboard"; mesAtual = mesDe(hojeISO()); mostrarView("dashboard"); window.scrollTo({ top: 0 }); }
 function mostrarLogin() { $("login-section").hidden = false; $("app-section").hidden = true; $("cons-fab").hidden = true; }
 
 $("login-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  const u = JSON.parse(localStorage.getItem(USER_KEY) || "{}");
+  const u = JSON.parse(LS.get(USER_KEY) || "{}");
   if ($("login-username").value.trim() === u.username && $("login-password").value === u.password) {
-    localStorage.setItem(SESSION_KEY, "true"); $("login-msg").textContent = ""; mostrarApp();
+    LS.set(SESSION_KEY, "true"); $("login-msg").textContent = ""; mostrarApp();
   } else {
     $("login-msg").textContent = "Utilizador ou senha inválidos."; $("login-msg").style.color = "var(--neg)";
   }
 });
-$("btn-logout").addEventListener("click", () => { localStorage.setItem(SESSION_KEY, "false"); mostrarLogin(); });
+$("btn-logout").addEventListener("click", () => { LS.set(SESSION_KEY, "false"); mostrarLogin(); });
 
 /* ---------- Eventos ---------- */
 $("tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) mostrarView(b.dataset.view); });
@@ -1183,7 +1311,7 @@ $("metas-lista").addEventListener("click", (e) => {
   }
   const ra = e.target.closest("[data-rem-ant]");
   if (ra) { const [mid, aid] = ra.dataset.remAnt.split("|"); const m = state.metas.find(x => x.id === mid); m.antecipacoes = m.antecipacoes.filter(a => a.id !== aid); salvar(); renderMetas(); return; }
-  if (rm && confirm("Remover esta meta?")) { state.metas = state.metas.filter(x => x.id !== rm.dataset.removerMeta); salvar(); renderMetas(); }
+  if (rm) perguntar("Remover esta meta?", "Remover").then(ok => { if (ok) { state.metas = state.metas.filter(x => x.id !== rm.dataset.removerMeta); salvar(); renderMetas(); } });
 });
 $("metas-lista").addEventListener("submit", (e) => {
   const fa = e.target.closest("form[data-add-ant]");
@@ -1248,17 +1376,31 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("moda
 $("btn-export-csv").addEventListener("click", exportarCSV);
 $("form-senha").addEventListener("submit", (e) => {
   e.preventDefault();
-  localStorage.setItem(USER_KEY, JSON.stringify({ username: $("u-nome").value.trim(), password: $("u-senha").value }));
+  LS.set(USER_KEY, JSON.stringify({ username: $("u-nome").value.trim(), password: $("u-senha").value }));
   $("u-senha").value = ""; toast("Utilizador e senha alterados.");
 });
-$("btn-apagar-tudo").addEventListener("click", () => {
-  if (!confirm("Apagar TODOS os lançamentos, orçamentos e metas deste navegador? Exporte uma cópia antes.")) return;
+$("btn-apagar-tudo").addEventListener("click", async () => {
+  if (!await perguntar("Apagar TODOS os lançamentos e metas? Exporte uma cópia antes.", "Apagar tudo")) return;
   state = estadoVazio(); salvar(); render(); toast("Dados apagados.");
 });
 
 /* ---------- Arranque ---------- */
-if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+if (!NO_CLAUDE && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js").catch(console.error));
 }
-localStorage.getItem(SESSION_KEY) === "true" ? mostrarApp() : mostrarLogin();
+(NO_CLAUDE || LS.get(SESSION_KEY) === "true") ? mostrarApp() : mostrarLogin();
+if (NO_CLAUDE) { $("btn-logout").hidden = true; iniciarNuvem(); }
+else {
+  // Versão antiga (GitHub Pages): aviso para passar para o link com nuvem.
+  const av = document.createElement("div"); av.className = "aviso-novo";
+  av.innerHTML = 'O app passou a sincronizar entre telemóvel e computador. <b>1)</b> Dados → Exportar JSON aqui · <b>2)</b> abra o <a href="https://claude.ai/artifact/JpxvCfXPQiBSfuei4tGmew" target="_blank" rel="noopener">novo link</a> → Dados → Importar (substituir).';
+  document.body.prepend(av);
+}
+// Ao voltar ao app depois de um tempo, abre de novo no Resumo do mês atual.
+let escondidoDesde = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) escondidoDesde = Date.now();
+  else if (escondidoDesde && Date.now() - escondidoDesde > 10 * 60 * 1000 && !$("app-section").hidden) irParaInicio();
+});
+window.addEventListener("pageshow", (e) => { if (e.persisted && !$("app-section").hidden) irParaInicio(); });
 if (!String(state.config.cambio?.data || "").startsWith(hojeISO()) && state.config.cambio?.fonte !== "manual") atualizarCambio(false);
