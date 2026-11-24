@@ -806,7 +806,8 @@ function renderMetas() {
 }
 
 /* ---------- Rumo a 2032 ---------- */
-const HORIZONTE = "2032-12";
+const HORIZONTE = "2045-12";   // fim do gráfico
+const META_LIVRE = "2032-12";  // objetivo: sem dívidas
 function emEUR(v, moeda) { return moeda === "BRL" ? paraEUR(v) : v; }
 function dividasRumo() {
   const hoje = hojeISO(), out = [];
@@ -823,13 +824,13 @@ function dividasRumo() {
   Object.entries(grupos).forEach(([nome, l]) => {
     l.sort((a, b) => a.data.localeCompare(b.data));
     const fim = mesDe(l[l.length - 1].data);
-    out.push({ nome, fim, parcela: l[l.length - 1].valor, restante: l.reduce((a, t) => a + t.valor, 0), aberto: fim >= HORIZONTE, porMes: (ym) => l.filter(t => mesDe(t.data) > ym).reduce((a, t) => a + t.valor, 0) });
+    out.push({ nome, fim, parcela: l[l.length - 1].valor, restante: l.reduce((a, t) => a + t.valor, 0), aberto: fim >= HORIZONTE, tarde: fim > META_LIVRE, porMes: (ym) => l.filter(t => mesDe(t.data) > ym).reduce((a, t) => a + t.valor, 0) });
   });
   state.metas.forEach(m => {
     if (m.tipo === "financiamento" && m.parcela > 0) {
       const p = progressoFinanciamento(m), fim = p.quitacao ? mesDe(p.quitacao) : HORIZONTE;
       const rows = p.sim.rows;
-      out.push({ nome: m.nome.replace(/^(Antecipar|Quitar) /i, ""), fim, parcela: emEUR(m.parcela, m.moeda), restante: emEUR(p.saldoHoje, m.moeda), aberto: !p.quitacao || fim > HORIZONTE,
+      out.push({ nome: m.nome.replace(/^(Antecipar|Quitar) /i, ""), fim, parcela: emEUR(m.parcela, m.moeda), restante: emEUR(p.saldoHoje, m.moeda), aberto: !p.quitacao || fim > HORIZONTE, tarde: fim > META_LIVRE,
         porMes: (ym) => { const r = rows.filter(x => mesDe(x.data) <= ym).pop(); return emEUR(r ? r.saldo : m.alvo, m.moeda); } });
     } else if (m.tipo !== "financiamento" && !m.vinculo && m.prazo && /quitar|pagamento|crédito|divida|dívida/i.test(m.nome) && m.atual < m.alvo) {
       const fim = mesDe(m.prazo), rest = emEUR(m.alvo - m.atual, m.moeda);
@@ -861,21 +862,23 @@ function renderRumo() {
   let g = "";
   for (let k = 0; k <= 4; k++) { const v = min + (k * (max - min)) / 4; g += `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--border)" stroke-dasharray="2 4"/><text x="${pl - 6}" y="${Y(v) + 3}" text-anchor="end">${Math.round(v / 1000)}k</text>`; }
   if (min < 0) g += `<line x1="${pl}" x2="${W - pr}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--muted)"/>`;
-  serie.forEach((x, i) => { if (x.ym.endsWith("-01")) g += `<line x1="${X(i)}" x2="${X(i)}" y1="${pt}" y2="${H - pb}" stroke="var(--border)"/><text x="${X(i) + 3}" y="${H - 8}">${x.ym.slice(0, 4)}</text>`; });
+  serie.forEach((x, i) => { if (x.ym.endsWith("-01")) { const y = Number(x.ym.slice(0, 4)); g += `<line x1="${X(i)}" x2="${X(i)}" y1="${pt}" y2="${H - pb}" stroke="var(--border)"/>${y % 2 === 0 ? `<text x="${X(i) + 3}" y="${H - 8}">${y}</text>` : ""}`; } });
+  const iMeta = meses.indexOf(META_LIVRE);
+  if (iMeta >= 0) g += `<line x1="${X(iMeta)}" x2="${X(iMeta)}" y1="${pt}" y2="${H - pb}" stroke="var(--warn)" stroke-dasharray="5 4" stroke-width="1.5"/><text x="${X(iMeta) - 4}" y="${pt + 10}" text-anchor="end" style="fill:var(--warn);font-weight:600">meta 2032</text>`;
   divs.filter(d => !d.aberto && d.fim >= inicio).forEach(d => { const i = meses.indexOf(d.fim); if (i >= 0) g += `<circle cx="${X(i)}" cy="${Y(serie[i].divida)}" r="3.5" fill="var(--neg)"><title>${esc(d.nome)} termina em ${nomeMes(d.fim)}</title></circle>`; });
   g += `<path d="${path("divida")}" fill="none" stroke="var(--neg)" stroke-width="2.2"/><path d="${path("reserva")}" fill="none" stroke="var(--pos)" stroke-width="2.2"/><path d="${path("saldo")}" fill="none" stroke="var(--c2)" stroke-width="1.6" stroke-dasharray="4 3"/>`;
   const ult = serie[serie.length - 1];
   g += `<text x="${W - pr}" y="${Y(ult.reserva) - 6}" text-anchor="end" style="fill:var(--pos);font-weight:600">${fmt(ult.reserva)}</text>`;
   $("rumo-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Projeção até 2032">${g}</svg>`;
   // lista
-  $("rumo-dividas").innerHTML = divs.map(d => `<li class="${d.aberto ? "aberto" : d.fim < inicio ? "feito" : ""}">
+  $("rumo-dividas").innerHTML = divs.map(d => `<li class="${d.aberto || d.tarde ? "aberto" : d.fim < inicio ? "feito" : ""}">
       <strong>${esc(d.nome)}</strong><span class="fim">${d.aberto ? "sem data de fim" : nomeMes(d.fim)}</span>
       <span class="muted">${d.parcela ? `${fmt(d.parcela)}/mês · ` : ""}falta ≈ ${fmt(d.restante)}${d.fora ? " · fora do orçamento" : ""}</span><span></span></li>`).join("");
   const abertos = divs.filter(d => d.aberto), livre = divs.length ? divs[divs.length - 1].fim : inicio;
   const st = $("rumo-status");
   if (abertos.length) { st.className = "cons-score atencao"; st.textContent = `${abertos.length} sem data de fim`; }
-  else if (livre <= HORIZONTE) { st.className = "cons-score bom"; st.textContent = `Sem dívidas em ${nomeMes(livre)}`; }
-  else { st.className = "cons-score critico"; st.textContent = "Passa de 2032"; }
+  else if (livre <= META_LIVRE) { st.className = "cons-score bom"; st.textContent = `Sem dívidas em ${nomeMes(livre)}`; }
+  else { st.className = "cons-score atencao"; st.textContent = `Sem dívidas em ${nomeMes(livre)} (meta: 2032)`; }
 }
 
 function cardFinanciamento(m) {
