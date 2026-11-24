@@ -206,6 +206,30 @@ function confirmarTransacao(id) {
   });
 }
 
+function ajustarValor(id) {
+  const t = state.transacoes.find(x => x.id === id); if (!t) return;
+  const emBRL = !!t.valorBRL && !t.pago;
+  // mesma série e mesmo dia do mês (ex.: o salário do dia 1 e o do dia 15 são séries paralelas)
+  const prox = t.serieId ? state.transacoes.filter(x => x.serieId === t.serieId && x.data > t.data && !x.pago && x.data.slice(8) === t.data.slice(8)) : [];
+  abrirModal({
+    titulo: "Ajustar valor",
+    sub: `${t.descricao} · ${dataCurta(dataVenc(t))}${t.pago ? " · já confirmado (o saldo real acompanha a diferença)" : ""}`,
+    campos: `<label>Novo valor (${emBRL ? "R$" : "€"})<input type="number" step="0.01" min="0" id="ma-valor" value="${emBRL ? t.valorBRL : t.valor}" required></label>
+      ${emBRL ? `<p class="muted small">≈ convertido ao câmbio de ${fmtTaxa(cambio())}</p>` : ""}
+      ${prox.length ? `<label class="check"><input type="checkbox" id="ma-serie"> Aplicar também aos próximos ${prox.length} desta série</label>` : ""}`,
+    ok: "Guardar",
+    onOk: () => {
+      const v = r2(Number($("ma-valor").value)); if (!(v >= 0)) return false;
+      const antes = t.valor;
+      if (emBRL) { t.valorBRL = v; t.valor = paraEUR(v); } else { t.valor = v; if (t.pago) t.valorBRL = null; }
+      if (t.pago && temSaldoReal()) state.config.saldoReal.valor = r2(state.config.saldoReal.valor + (t.tipo === "receita" ? 1 : -1) * (t.valor - antes));
+      let n = 0;
+      if ($("ma-serie") && $("ma-serie").checked) prox.forEach(x => { if (emBRL) { x.valorBRL = v; x.valor = paraEUR(v); } else { x.valor = v; x.valorBRL = null; } n++; });
+      salvar(); render(); toast(`Valor atualizado${n ? ` (e mais ${n} da série)` : ""}: ${t.descricao} ${fmt(t.valor)}.`);
+    },
+  });
+}
+
 function editarSaldoReal() {
   const hoje = hojeISO();
   const atrasados = pendentesAte(hoje);
@@ -307,17 +331,12 @@ function renderDashboard() {
   const saldoEl = $("kpi-saldo");
   const hoje = hojeISO();
   if (temSaldoReal()) {
-    const sr = state.config.saldoReal;
-    $("saldo-real-valor").textContent = fmt(sr.valor); $("saldo-real-valor").className = "saldo-real " + (sr.valor >= 0 ? "pos" : "neg");
-    const d0 = new Date(sr.data);
-    $("saldo-real-nota").textContent = `Atualizado em ${d0.toLocaleDateString("pt-PT")} às ${d0.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}. Cada pagamento confirmado atualiza este valor.`;
     if (fimDoMes(mesAtual) < hoje) { saldoEl.textContent = "—"; saldoEl.className = ""; $("kpi-saldo-nota").textContent = "mês passado"; }
     else { const s = saldoPrevisto(fimDoMes(mesAtual)); saldoEl.textContent = fmt(s); saldoEl.className = s >= 0 ? "pos" : "neg"; $("kpi-saldo-nota").textContent = "saldo real + pendentes até ao fim do mês"; }
   } else {
-    $("saldo-real-valor").textContent = "—"; $("saldo-real-valor").className = "saldo-real";
     const ini = state.config.saldoInicial;
     if (ini && ini.data && fimDoMes(mesAtual) < ini.data) { saldoEl.textContent = "—"; saldoEl.className = ""; $("kpi-saldo-nota").textContent = `antes do saldo inicial (${dataCurta(ini.data)})`; }
-    else { const s = saldoAte(fimDoMes(mesAtual)); saldoEl.textContent = fmt(s); saldoEl.className = s >= 0 ? "pos" : "neg"; $("kpi-saldo-nota").textContent = ini && ini.data ? `plano desde ${dataCurta(ini.data)} · defina o saldo real acima` : "defina o saldo real acima"; }
+    else { const s = saldoAte(fimDoMes(mesAtual)); saldoEl.textContent = fmt(s); saldoEl.className = s >= 0 ? "pos" : "neg"; $("kpi-saldo-nota").textContent = "defina o saldo real no topo"; }
   }
 
   // A confirmar: atrasados + próximos 7 dias
@@ -326,7 +345,6 @@ function renderDashboard() {
   $("dash-confirmar").innerHTML = conf.length ? conf.map(t => itemMov(t, hoje)).join("") : `<li class="empty" style="display:block">Nada pendente para os próximos 7 dias. 🎉</li>`;
 
   $("aviso-backup").hidden = true;
-  renderConselheiro();
 
   graficoBarras($("chart-barras"));
   graficoDonut($("chart-donut"));
@@ -355,8 +373,24 @@ function itemMov(t, hoje) {
   return `<li class="${t.pago ? "pago" : ""} ${atras ? "atrasado" : ""}">
     <span class="due-day">${Number(dv.slice(8, 10))}<small>${MESES_CURTOS[Number(dv.slice(5, 7)) - 1]}</small></span>
     <span>${esc(t.descricao)}<span class="cat">${esc(t.categoria)}${atras ? " · atrasado" : ""}${t.pago ? ` · ${rec ? "recebido" : "pago"} ${dataCurta(t.pagoEm).slice(0, 5)}` : ""}</span></span>
-    <span class="v ${rec ? "pos" : "neg"}">${rec ? "+" : "−"}${fmt(t.valor)}</span>
+    <span class="v ${rec ? "pos" : "neg"}"><button class="valor-btn" data-ajustar="${esc(t.id)}" title="Ajustar valor">${rec ? "+" : "−"}${fmt(t.valor)}</button></span>
     <button class="chk ${t.pago ? "on" : ""}" data-confirmar="${esc(t.id)}" title="${t.pago ? "Desfazer confirmação" : rec ? "Confirmar recebimento" : "Confirmar pagamento"}">✓</button></li>`;
+}
+
+/* ---------- Barra fixa do saldo ---------- */
+function renderSaldoBar() {
+  const hoje = hojeISO(), el = $("saldo-real-valor"), pv = $("sb-previsto");
+  $("sb-prev-label").textContent = `Previsto fim de ${MESES[Number(hoje.slice(5, 7)) - 1]}`;
+  if (temSaldoReal()) {
+    const sr = state.config.saldoReal, d0 = new Date(sr.data);
+    el.textContent = fmt(sr.valor); el.className = "sb-valor " + (sr.valor >= 0 ? "pos" : "neg");
+    const p = saldoPrevisto(fimDoMes(mesDe(hoje)));
+    pv.textContent = fmt(p); pv.className = "sb-valor sb-sec " + (p >= 0 ? "pos" : "neg");
+    $("saldo-real-nota").textContent = `Atualizado ${d0.toLocaleDateString("pt-PT")} ${d0.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })} · cada ✓ atualiza o saldo`;
+  } else {
+    el.textContent = "—"; el.className = "sb-valor"; pv.textContent = "—"; pv.className = "sb-valor sb-sec";
+    $("saldo-real-nota").textContent = "Diga quanto tem hoje na conta.";
+  }
 }
 
 /* ---------- Conselheiro: insights do dia ---------- */
@@ -468,6 +502,7 @@ function calcularInsights() {
 }
 
 let consMostrarTodos = false;
+const CONS_KEY = "fin_conselheiro_fechado";
 function renderConselheiro() {
   const h = new Date().getHours();
   const nome = (JSON.parse(localStorage.getItem(USER_KEY) || "{}").nome) || "Neto";
@@ -475,13 +510,24 @@ function renderConselheiro() {
   $("cons-sub").textContent = new Date().toLocaleDateString("pt-PT", { weekday: "long", day: "numeric", month: "long" });
   const { ins, score } = calcularInsights();
   const sc = $("cons-score"); sc.className = "cons-score " + score[0]; sc.textContent = score[1];
-  const lista = consMostrarTodos ? ins : ins.slice(0, 4);
+  const lista = consMostrarTodos ? ins : ins.slice(0, 1);
   $("cons-lista").innerHTML = lista.map(i => `<li class="${i.tom}"><span class="ic">${i.ic}</span><span>${i.txt}</span>${i.acao ? `<span class="acao">${i.acao}</span>` : ""}</li>`).join("")
     || `<li class="bom"><span class="ic">🌱</span><span>Tudo em dia. Bom trabalho!</span></li>`;
-  $("cons-mais").hidden = ins.length <= 4;
-  $("cons-mais").textContent = consMostrarTodos ? "Ver menos" : `Ver mais (${ins.length - 4})`;
+  $("cons-mais").textContent = consMostrarTodos ? "Ver menos" : ins.length > 1 ? `Ver mais ${ins.length - 1} + dica do dia` : "Dica do dia";
   const doy = Math.floor((Date.parse(hojeISO()) - Date.parse(hojeISO().slice(0, 4) + "-01-01")) / 864e5);
   $("cons-dica").innerHTML = `💡 <strong>Dica do dia:</strong> ${DICAS[doy % DICAS.length]}`;
+  $("cons-dica").hidden = !consMostrarTodos;
+  const alertas = ins.filter(i => i.tom === "alto" || i.tom === "medio");
+  const badge = $("cons-badge");
+  badge.hidden = !alertas.length; badge.textContent = alertas.length;
+  badge.className = "cons-badge" + (ins.some(i => i.tom === "alto") ? "" : " medio");
+  $("cons-fab").classList.toggle("fechado", localStorage.getItem(CONS_KEY) === hojeISO());
+}
+function alternarConselheiro(abrir) {
+  const fechado = $("cons-fab").classList.contains("fechado");
+  const abre = abrir ?? fechado;
+  if (abre) localStorage.removeItem(CONS_KEY); else { localStorage.setItem(CONS_KEY, hojeISO()); consMostrarTodos = false; }
+  renderConselheiro();
 }
 
 // Resumo do mês em texto, para conversar com o conselheiro no Claude
@@ -529,7 +575,7 @@ function renderLancamentos() {
       <td>${dataCurta(t.data)}${t.vencimento ? `<span class="sub">vence dia ${t.vencimento}</span>` : ""}${t.pago ? `<span class="sub pos">${t.tipo === "receita" ? "recebido" : "pago"} ${dataCurta(t.pagoEm)}</span>` : ""}</td>
       <td>${esc(t.descricao)}${t.serieId ? ' <span title="Recorrente">🔄</span>' : ""}${t.valorBRL ? `<span class="sub">${fmtBRL(t.valorBRL)}${t.nota && !t.nota.startsWith("R$") ? " · " + esc(t.nota) : ""}</span>` : t.nota ? `<span class="sub">${esc(t.nota)}</span>` : ""}</td>
       <td><span class="tag">${esc(t.categoria)}</span></td>
-      <td class="num ${t.tipo === "receita" ? "pos" : "neg"}">${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}</td>
+      <td class="num ${t.tipo === "receita" ? "pos" : "neg"}"><button class="valor-btn" data-ajustar="${esc(t.id)}" title="Ajustar valor">${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}</button></td>
       <td class="actions">
         <button class="icon-btn" data-acao="editar" data-id="${esc(t.id)}" title="Editar">✏️</button>
         <button class="icon-btn" data-acao="remover" data-id="${esc(t.id)}" title="Remover">🗑️</button>
@@ -571,7 +617,7 @@ function editarTransacao(id) {
   $("f-vencimento").value = t.vencimento || "";
   $("f-recorrente").checked = false;
   $("f-recorrente").disabled = true;
-  const proximos = t.serieId ? state.transacoes.filter(x => x.serieId === t.serieId && x.data > t.data && !x.pago).length : 0;
+  const proximos = t.serieId ? state.transacoes.filter(x => x.serieId === t.serieId && x.data > t.data && !x.pago && x.data.slice(8) === t.data.slice(8)).length : 0;
   $("f-serie-wrap").hidden = !proximos; $("f-serie").checked = true;
   if (proximos) $("f-serie-wrap").lastChild.textContent = ` Aplicar também aos próximos ${proximos} desta série (valor, descrição, categoria e vencimento)`;
   editandoId = id;
@@ -602,7 +648,7 @@ function guardarTransacao(e) {
     let n = 0;
     if (orig.serieId && !$("f-serie-wrap").hidden && $("f-serie").checked) {
       state.transacoes.forEach(x => {
-        if (x.serieId === orig.serieId && x.data > orig.data && !x.pago) {
+        if (x.serieId === orig.serieId && x.data > orig.data && !x.pago && x.data.slice(8) === orig.data.slice(8)) {
           Object.assign(x, { descricao: base.descricao, categoria: base.categoria, tipo: base.tipo, valor: base.valor, valorBRL: base.valorBRL, vencimento: base.vencimento }); n++;
         }
       });
@@ -825,6 +871,7 @@ function mostrarView(v) {
 function render() {
   $("mes-label").textContent = nomeMes(mesAtual);
   $("fx-pill").textContent = `1 € = ${fmtTaxa(cambio())}`;
+  renderSaldoBar(); renderConselheiro();
   if (viewAtual === "dashboard") renderDashboard();
   if (viewAtual === "lancamentos") renderLancamentos();
   if (viewAtual === "orcamento") renderOrcamento();
@@ -834,8 +881,8 @@ function render() {
 
 /* ---------- Login ---------- */
 if (!localStorage.getItem(USER_KEY)) localStorage.setItem(USER_KEY, JSON.stringify({ username: "admin", password: "1234" }));
-function mostrarApp() { $("login-section").hidden = true; $("app-section").hidden = false; limparForm(); mostrarView(viewAtual); }
-function mostrarLogin() { $("login-section").hidden = false; $("app-section").hidden = true; }
+function mostrarApp() { $("login-section").hidden = true; $("app-section").hidden = false; $("cons-fab").hidden = false; limparForm(); mostrarView(viewAtual); }
+function mostrarLogin() { $("login-section").hidden = false; $("app-section").hidden = true; $("cons-fab").hidden = true; }
 
 $("login-form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -933,15 +980,20 @@ $("btn-export-ics").addEventListener("click", exportarICS);
 $("aviso-backup").addEventListener("click", (e) => { if (e.target.closest("[data-backup]")) exportarJSON(); });
 $("btn-saldo-real").addEventListener("click", editarSaldoReal);
 $("cons-mais").addEventListener("click", () => { consMostrarTodos = !consMostrarTodos; renderConselheiro(); });
+$("cons-fechar").addEventListener("click", () => alternarConselheiro(false));
+$("cons-toggle").addEventListener("click", () => alternarConselheiro());
 $("cons-claude").addEventListener("click", conversarComConselheiro);
 $("cons-lista").addEventListener("click", (e) => {
   if (e.target.closest("[data-acao-cons=saldo]")) editarSaldoReal();
   if (e.target.closest("[data-backup]")) exportarJSON();
-  if (e.target.closest("[data-goto-pend]")) { $("mov-filtro").value = "pendentes"; mesAtual = mesDe(hojeISO()); render(); document.getElementById("dash-confirmar").scrollIntoView({ behavior: "smooth", block: "center" }); }
+  if (e.target.closest("[data-goto-pend]")) { $("mov-filtro").value = "pendentes"; mesAtual = mesDe(hojeISO()); mostrarView("dashboard"); document.getElementById("dash-confirmar").scrollIntoView({ behavior: "smooth", block: "center" }); }
 });
 $("mov-filtro").addEventListener("change", renderDashboard);
 $("filtro-status").addEventListener("change", renderLancamentos);
-document.addEventListener("click", (e) => { const b = e.target.closest("[data-confirmar]"); if (b) { e.preventDefault(); confirmarTransacao(b.dataset.confirmar); } });
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-confirmar]"); if (b) { e.preventDefault(); confirmarTransacao(b.dataset.confirmar); return; }
+  const a = e.target.closest("[data-ajustar]"); if (a) { e.preventDefault(); ajustarValor(a.dataset.ajustar); }
+});
 $("modal-cancelar").addEventListener("click", fecharModal);
 $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") fecharModal(); });
 $("modal-form").addEventListener("submit", (e) => { e.preventDefault(); const f = abrirModal._ok; if (f && f() !== false) fecharModal(); });

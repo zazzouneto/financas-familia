@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=7">
+  <link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
 
@@ -26,6 +26,7 @@
 
   <!-- APP -->
   <div id="app-section" class="app" hidden>
+    <div class="sticky-top">
     <header class="topbar">
       <div class="brand"><span class="brand-mark">◆</span> Impact Finance</div>
       <nav class="tabs" id="tabs">
@@ -37,6 +38,19 @@
       </nav>
       <button id="btn-logout" class="btn btn-ghost btn-sm">Sair</button>
     </header>
+    <div class="saldobar">
+      <div class="sb-item">
+        <span class="sb-label">Saldo real</span>
+        <strong id="saldo-real-valor" class="sb-valor">—</strong>
+      </div>
+      <div class="sb-item">
+        <span class="sb-label" id="sb-prev-label">Previsto fim do mês</span>
+        <strong id="sb-previsto" class="sb-valor sb-sec">—</strong>
+      </div>
+      <small class="muted sb-nota" id="saldo-real-nota">Ainda não definido.</small>
+      <button class="btn btn-sm btn-primary" id="btn-saldo-real">Atualizar<span class="hide-sm"> saldo</span></button>
+    </div>
+    </div>
 
     <div class="monthbar" id="monthbar">
       <button class="btn btn-ghost btn-icon" id="mes-anterior" aria-label="Mês anterior">‹</button>
@@ -48,29 +62,8 @@
 
     <!-- RESUMO -->
     <section class="view" id="view-dashboard">
-      <div class="card conselheiro">
-        <div class="cons-head">
-          <img id="cons-avatar" class="avatar" src="https://github.com/zazzouneto.png?size=160" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar avatar-fallback',textContent:'N'}))">
-          <div class="cons-titulo">
-            <strong id="cons-saudacao">Olá!</strong>
-            <span class="muted small" id="cons-sub">O seu conselheiro financeiro</span>
-          </div>
-          <span class="cons-score" id="cons-score" title="Saúde financeira do mês">—</span>
-        </div>
-        <ul class="cons-lista" id="cons-lista"></ul>
-        <div class="cons-dica" id="cons-dica"></div>
-        <div class="btn-row cons-acoes">
-          <button class="btn btn-sm" id="cons-mais">Ver mais</button>
-          <button class="btn btn-sm btn-primary" id="cons-claude" title="Abre o Claude com o resumo do seu mês">💬 Conversar com o conselheiro</button>
-        </div>
-      </div>
       <div id="aviso-backup" class="aviso" hidden></div>
       <div class="grid-hoje">
-        <div class="card saldo-real-card">
-          <div class="card-head"><h3>Saldo real na conta</h3><button class="btn btn-sm btn-primary" id="btn-saldo-real">Atualizar saldo</button></div>
-          <div class="saldo-real" id="saldo-real-valor">—</div>
-          <small class="muted" id="saldo-real-nota">Ainda não definido. Toque em "Atualizar saldo" e escreva quanto tem hoje na conta.</small>
-        </div>
         <div class="card">
           <div class="card-head"><h3>A confirmar</h3><span class="muted small">atrasados e próximos 7 dias</span></div>
           <ul id="dash-confirmar" class="due-list"></ul>
@@ -243,6 +236,28 @@
     </section>
   </div>
 
+  <div class="cons-fab" id="cons-fab" hidden>
+    <div class="cons-bubble" id="cons-bubble">
+      <div class="cons-head">
+        <div class="cons-titulo">
+          <strong id="cons-saudacao">Olá!</strong>
+          <span class="muted small" id="cons-sub"></span>
+        </div>
+        <span class="cons-score" id="cons-score" title="Saúde financeira do mês">—</span>
+        <button class="icon-btn" id="cons-fechar" title="Minimizar">✕</button>
+      </div>
+      <ul class="cons-lista" id="cons-lista"></ul>
+      <div class="cons-dica" id="cons-dica" hidden></div>
+      <div class="cons-acoes">
+        <button class="btn btn-sm btn-ghost" id="cons-mais">Ver mais</button>
+        <button class="btn btn-sm btn-primary" id="cons-claude" title="Abre o Claude com o resumo do seu mês">💬 Conversar</button>
+      </div>
+    </div>
+    <button class="cons-avatar-btn" id="cons-toggle" title="Conselheiro">
+      <img id="cons-avatar" class="avatar" src="https://github.com/zazzouneto.png?size=160" alt="Conselheiro" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar avatar-fallback',textContent:'N'}))">
+      <span class="cons-badge" id="cons-badge" hidden>0</span>
+    </button>
+  </div>
   <div id="modal" class="modal" hidden>
     <form class="modal-card" id="modal-form">
       <h3 id="modal-titulo">—</h3>
@@ -255,6 +270,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
