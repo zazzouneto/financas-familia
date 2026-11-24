@@ -352,12 +352,6 @@ function renderDashboard() {
   graficoBarras($("chart-barras"));
   graficoDonut($("chart-donut"));
 
-  // Orçamento
-  const orc = state.orcamentos.filter(o => o.limite > 0);
-  $("dash-orcamento").innerHTML = orc.length
-    ? orc.map(o => linhaProgresso(o.categoria, gastoCategoria(mesAtual, o.categoria), o.limite)).join("")
-    : `<p class="empty">Nenhum limite definido.</p>`;
-
   // Movimentos do mês
   const filtro = $("mov-filtro").value;
   const mov = lista.filter(t => filtro === "todos" || (filtro === "pagos" ? t.pago : !t.pago))
@@ -457,14 +451,6 @@ function calcularInsights() {
       if (v < 0) { add(75, "medio", "📉", `Atenção a <strong>${nomeMes(ym)}</strong>: o saldo previsto fica em ${fmt(v)}. Ainda dá tempo de ajustar.`); break; }
     }
   }
-
-  // 5) Orçamento (gastos confirmados vs limite)
-  state.orcamentos.filter(o => o.limite > 0).forEach(o => {
-    const gasto = doMes(mesH).filter(t => t.tipo === "despesa" && t.categoria === o.categoria && t.pago).reduce((a, t) => a + t.valor, 0);
-    const pct = gasto / o.limite;
-    if (pct > 1) add(85, "alto", "🛑", `<strong>${esc(o.categoria)}</strong> já passou o limite: ${fmt(gasto)} de ${fmt(o.limite)}.`);
-    else if (pct >= 0.85) add(65, "medio", "⚠️", `<strong>${esc(o.categoria)}</strong> está em ${Math.round(pct * 100)}% do limite (${fmt(gasto)} de ${fmt(o.limite)}).`);
-  });
 
   // 6) Dívidas e metas
   state.metas.filter(m => m.alvo > 0).forEach(m => {
@@ -683,35 +669,6 @@ function removerTransacao(id) {
   if (!confirm(`Remover "${t.descricao}" (${fmt(t.valor)})?`)) return;
   state.transacoes = state.transacoes.filter(x => x.id !== id);
   salvar(); render(); toast("Lançamento removido.");
-}
-
-/* ---------- Render: Orçamento ---------- */
-function renderOrcamento() {
-  const cats = new Set(state.orcamentos.map(o => o.categoria));
-  // mostra também categorias com despesas no mês sem limite definido
-  doMes(mesAtual).filter(t => t.tipo === "despesa").forEach(t => cats.add(t.categoria));
-  const linhas = [...cats].sort((a, b) => a.localeCompare(b, "pt")).map(cat => {
-    const o = state.orcamentos.find(x => x.categoria === cat);
-    const gasto = gastoCategoria(mesAtual, cat), limite = o ? o.limite : 0;
-    const pct = limite ? (gasto / limite) * 100 : 0;
-    const cls = !limite ? "" : pct > 100 ? "over" : pct >= 85 ? "warn" : "";
-    const resto = limite - gasto;
-    return `<div class="progress-row">
-      <div class="progress-top">
-        <span>${esc(cat)}</span>
-        <span class="v">${fmt(gasto)} de
-          <input class="limit-input" type="number" step="0.01" min="0" data-cat="${esc(cat)}" value="${limite || ""}" placeholder="sem limite">
-          ${o ? `<button class="icon-btn" data-remover-orc="${esc(cat)}" title="Remover limite">✕</button>` : ""}
-        </span>
-      </div>
-      <div class="bar ${cls}"><i style="width:${limite ? Math.min(100, pct) : 0}%"></i></div>
-      ${limite ? `<span class="small ${resto < 0 ? "neg" : "muted"}">${resto < 0 ? `Excedido em ${fmt(-resto)}` : `Disponível: ${fmt(resto)}`}</span>` : ""}
-    </div>`;
-  });
-  const totLim = state.orcamentos.reduce((a, o) => a + (o.limite || 0), 0);
-  const totGasto = soma(doMes(mesAtual), "despesa");
-  $("orcamento-lista").innerHTML = (linhas.join("") || `<p class="empty">Ainda sem categorias.</p>`) +
-    (totLim ? `<div class="progress-row"><div class="progress-top"><strong>Total</strong><span class="v">${fmt(totGasto)} / ${fmt(totLim)}</span></div></div>` : "");
 }
 
 /* ---------- Render: Metas ---------- */
@@ -1018,7 +975,6 @@ function render() {
   renderSaldoBar(); renderConselheiro();
   if (viewAtual === "dashboard") renderDashboard();
   if (viewAtual === "lancamentos") renderLancamentos();
-  if (viewAtual === "orcamento") renderOrcamento();
   if (viewAtual === "metas") renderMetas();
   if (viewAtual === "dados") renderDados();
 }
@@ -1054,28 +1010,6 @@ $("lista-transacoes").addEventListener("click", (e) => {
 });
 ["filtro-periodo", "filtro-tipo", "filtro-categoria"].forEach(id => $(id).addEventListener("change", renderLancamentos));
 $("filtro-busca").addEventListener("input", renderLancamentos);
-
-$("form-orcamento").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const cat = $("o-categoria").value.trim(), lim = Number($("o-limite").value);
-  if (!cat) return;
-  const i = state.orcamentos.findIndex(o => o.categoria === cat);
-  i === -1 ? state.orcamentos.push({ categoria: cat, limite: lim }) : (state.orcamentos[i].limite = lim);
-  salvar(); e.target.reset(); render(); toast("Limite guardado.");
-});
-$("orcamento-lista").addEventListener("change", (e) => {
-  const inp = e.target.closest("input[data-cat]"); if (!inp) return;
-  const cat = inp.dataset.cat, lim = Number(inp.value) || 0;
-  const i = state.orcamentos.findIndex(o => o.categoria === cat);
-  if (i === -1 && lim > 0) state.orcamentos.push({ categoria: cat, limite: lim });
-  else if (i !== -1) state.orcamentos[i].limite = lim;
-  salvar(); renderOrcamento();
-});
-$("orcamento-lista").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-remover-orc]"); if (!b) return;
-  state.orcamentos = state.orcamentos.filter(o => o.categoria !== b.dataset.removerOrc);
-  salvar(); renderOrcamento();
-});
 
 $("form-meta").addEventListener("submit", (e) => {
   e.preventDefault();
