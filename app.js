@@ -65,7 +65,10 @@ function normalizarTransacao(t) {
 }
 function normalizarMeta(m) {
   return { id: String(m.id || uid()), nome: String(m.nome || "Meta"), moeda: m.moeda === "BRL" ? "BRL" : "EUR",
-    alvo: Number(m.alvo) || 0, atual: Number(m.atual) || 0, prazo: m.prazo || "", nota: m.nota || "", vinculo: m.vinculo || "" };
+    alvo: Number(m.alvo) || 0, atual: Number(m.atual) || 0, prazo: m.prazo || "", nota: m.nota || "", vinculo: m.vinculo || "",
+    tipo: m.tipo === "financiamento" ? "financiamento" : "meta",
+    parcela: Number(m.parcela) || 0, taxa: Number(m.taxa) || 0, primeiraParcela: m.primeiraParcela || "", dataSaldo: m.dataSaldo || "",
+    antecipacoes: Array.isArray(m.antecipacoes) ? m.antecipacoes.map(a => ({ id: String(a.id || uid()), data: String(a.data), valor: Number(a.valor) || 0, nota: a.nota || "", pago: !!a.pago })) : [] };
 }
 function carregar() {
   try {
@@ -712,9 +715,33 @@ function renderOrcamento() {
 }
 
 /* ---------- Render: Metas ---------- */
+/* Financiamento (ex.: consignado descontado no salário): tabela de amortização com antecipações. */
+function simularFinanciamento(m, comAntecipacoes = true) {
+  const i = (m.taxa || 0) / 100, rows = [];
+  let bal = m.alvo, juros = 0, d = m.primeiraParcela || `${mesDe(hojeISO())}-01`;
+  const ext = {};
+  if (comAntecipacoes) (m.antecipacoes || []).forEach(a => { const k = mesDe(a.data); ext[k] = (ext[k] || 0) + a.valor; });
+  for (let n = 0; n < 600 && bal > 0.01 && m.parcela > 0; n++) {
+    const j = r2(bal * i); juros += j; bal += j;
+    const p = Math.min(m.parcela, bal); bal -= p;
+    const e = Math.min(ext[mesDe(d)] || 0, bal); bal -= e;
+    rows.push({ data: d, parcela: r2(p), extra: r2(e), juros: j, saldo: r2(Math.max(0, bal)) });
+    d = somarMesesData(d, 1);
+  }
+  return { rows, juros: r2(juros), quitacao: rows.length ? rows[rows.length - 1].data : null, termina: bal <= 0.01 };
+}
+function progressoFinanciamento(m) {
+  const hoje = hojeISO(), sim = simularFinanciamento(m), base = simularFinanciamento(m, false);
+  const passados = sim.rows.filter(r => r.data <= hoje);
+  const saldoHoje = passados.length ? passados[passados.length - 1].saldo : m.alvo;
+  const atual = r2(m.alvo - saldoHoje);
+  return { atual, plano: [], quitacao: sim.termina ? sim.quitacao : null, programado: r2(saldoHoje), ligados: 0, falta: 0, sim, base, saldoHoje };
+}
+
 /* Meta ligada a lançamentos: o progresso vem das despesas cuja descrição começa pelo "vínculo". */
 function emMoedaMeta(t, m) { return m.moeda === "BRL" ? (t.valorBRL || r2(t.valor * cambio())) : t.valor; }
 function progressoMeta(m) {
+  if (m.tipo === "financiamento") return progressoFinanciamento(m);
   const hoje = hojeISO();
   const v = (m.vinculo || "").trim().toLowerCase();
   const lig = v ? state.transacoes.filter(t => t.tipo === "despesa" && t.descricao.toLowerCase().startsWith(v)).sort((a, b) => a.data.localeCompare(b.data)) : [];
@@ -733,7 +760,9 @@ function progressoMeta(m) {
 
 function renderMetas() {
   const hoje = hojeISO();
+  renderRumo();
   $("metas-lista").innerHTML = state.metas.map(m => {
+    if (m.tipo === "financiamento") return cardFinanciamento(m);
     const F = (v) => fmtMoeda(v, m.moeda);
     const p = progressoMeta(m);
     const pct = m.alvo ? Math.min(100, (p.atual / m.alvo) * 100) : 0;
@@ -767,6 +796,105 @@ function renderMetas() {
       <form class="add" data-aporte="${esc(m.id)}"><input type="number" step="0.01" placeholder="Pagamento extra ${m.moeda === "BRL" ? "R$" : "€"}" required><button class="btn btn-sm" type="submit">+ Registar</button></form>
     </div>`;
   }).join("") || `<div class="card"><p class="empty">Crie a sua primeira meta abaixo — ex.: fundo de emergência ou quitar um crédito.</p></div>`;
+}
+
+/* ---------- Rumo a 2032 ---------- */
+const HORIZONTE = "2032-12";
+function emEUR(v, moeda) { return moeda === "BRL" ? paraEUR(v) : v; }
+function dividasRumo() {
+  const hoje = hojeISO(), out = [];
+  // séries/lançamentos de crédito ainda pendentes (exceto financiamentos tratados por metas)
+  const grupos = {};
+  state.transacoes.filter(t => t.categoria === "Crédito" && t.tipo === "despesa" && !t.pago && t.data >= `${mesDe(hoje)}-01`).forEach(t => {
+    const k = t.descricao.replace(/ —.*$/, "");
+    (grupos[k] = grupos[k] || []).push(t);
+  });
+  Object.entries(grupos).forEach(([nome, l]) => {
+    l.sort((a, b) => a.data.localeCompare(b.data));
+    const fim = mesDe(l[l.length - 1].data);
+    out.push({ nome, fim, parcela: l[l.length - 1].valor, restante: l.reduce((a, t) => a + t.valor, 0), aberto: fim >= HORIZONTE, porMes: (ym) => l.filter(t => mesDe(t.data) > ym).reduce((a, t) => a + t.valor, 0) });
+  });
+  state.metas.forEach(m => {
+    if (m.tipo === "financiamento" && m.parcela > 0) {
+      const p = progressoFinanciamento(m), fim = p.quitacao ? mesDe(p.quitacao) : HORIZONTE;
+      const rows = p.sim.rows;
+      out.push({ nome: m.nome.replace(/^Antecipar /, ""), fim, parcela: emEUR(m.parcela, m.moeda), restante: emEUR(p.saldoHoje, m.moeda), aberto: !p.quitacao || fim > HORIZONTE,
+        porMes: (ym) => { const r = rows.filter(x => mesDe(x.data) <= ym).pop(); return emEUR(r ? r.saldo : m.alvo, m.moeda); } });
+    } else if (m.tipo !== "financiamento" && !m.vinculo && m.prazo && /quitar|pagamento|crédito|divida|dívida/i.test(m.nome) && m.atual < m.alvo) {
+      const fim = mesDe(m.prazo), rest = emEUR(m.alvo - m.atual, m.moeda);
+      out.push({ nome: m.nome.replace(/^(Plano Pagamento|Quitar) /, ""), fim, parcela: null, restante: rest, aberto: false, fora: true, porMes: (ym) => (ym < fim ? rest : 0) });
+    }
+  });
+  return out.sort((a, b) => a.fim.localeCompare(b.fim));
+}
+function renderRumo() {
+  if (!$("rumo")) return;
+  const hoje = hojeISO(), inicio = mesDe(hoje);
+  const meses = []; for (let ym = inicio; ym <= HORIZONTE; ym = somarMeses(ym, 1)) meses.push(ym);
+  const divs = dividasRumo();
+  const reservaMeta = state.metas.find(m => /reserva/i.test(m.nome));
+  const resLig = reservaMeta && reservaMeta.vinculo ? state.transacoes.filter(t => t.descricao.toLowerCase().startsWith(reservaMeta.vinculo.toLowerCase())) : [];
+  const serie = meses.map(ym => {
+    const fim = fimDoMes(ym);
+    const divida = divs.reduce((a, d) => a + d.porMes(ym), 0);
+    const reserva = (reservaMeta ? emEUR(reservaMeta.atual, reservaMeta.moeda) : 0) + resLig.filter(t => t.data <= fim).reduce((a, t) => a + t.valor, 0);
+    return { ym, divida, reserva, saldo: saldoPrevisto(fim) };
+  });
+  // gráfico
+  const W = 900, H = 240, pl = 46, pr = 10, pt = 12, pb = 26;
+  const max = Math.max(1, ...serie.flatMap(x => [x.divida, x.reserva, x.saldo]));
+  const min = Math.min(0, ...serie.map(x => x.saldo));
+  const X = (i) => pl + (i / Math.max(1, serie.length - 1)) * (W - pl - pr);
+  const Y = (v) => pt + (1 - (v - min) / (max - min)) * (H - pt - pb);
+  const path = (k) => serie.map((x, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(x[k]).toFixed(1)}`).join("");
+  let g = "";
+  for (let k = 0; k <= 4; k++) { const v = min + (k * (max - min)) / 4; g += `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--border)" stroke-dasharray="2 4"/><text x="${pl - 6}" y="${Y(v) + 3}" text-anchor="end">${Math.round(v / 1000)}k</text>`; }
+  if (min < 0) g += `<line x1="${pl}" x2="${W - pr}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--muted)"/>`;
+  serie.forEach((x, i) => { if (x.ym.endsWith("-01")) g += `<line x1="${X(i)}" x2="${X(i)}" y1="${pt}" y2="${H - pb}" stroke="var(--border)"/><text x="${X(i) + 3}" y="${H - 8}">${x.ym.slice(0, 4)}</text>`; });
+  divs.filter(d => !d.aberto && d.fim >= inicio).forEach(d => { const i = meses.indexOf(d.fim); if (i >= 0) g += `<circle cx="${X(i)}" cy="${Y(serie[i].divida)}" r="3.5" fill="var(--neg)"><title>${esc(d.nome)} termina em ${nomeMes(d.fim)}</title></circle>`; });
+  g += `<path d="${path("divida")}" fill="none" stroke="var(--neg)" stroke-width="2.2"/><path d="${path("reserva")}" fill="none" stroke="var(--pos)" stroke-width="2.2"/><path d="${path("saldo")}" fill="none" stroke="var(--c2)" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+  const ult = serie[serie.length - 1];
+  g += `<text x="${W - pr}" y="${Y(ult.reserva) - 6}" text-anchor="end" style="fill:var(--pos);font-weight:600">${fmt(ult.reserva)}</text>`;
+  $("rumo-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Projeção até 2032">${g}</svg>`;
+  // lista
+  $("rumo-dividas").innerHTML = divs.map(d => `<li class="${d.aberto ? "aberto" : d.fim < inicio ? "feito" : ""}">
+      <strong>${esc(d.nome)}</strong><span class="fim">${d.aberto ? "sem data de fim" : nomeMes(d.fim)}</span>
+      <span class="muted">${d.parcela ? `${fmt(d.parcela)}/mês · ` : ""}falta ≈ ${fmt(d.restante)}${d.fora ? " · fora do orçamento" : ""}</span><span></span></li>`).join("");
+  const abertos = divs.filter(d => d.aberto), livre = divs.length ? divs[divs.length - 1].fim : inicio;
+  const st = $("rumo-status");
+  if (abertos.length) { st.className = "cons-score atencao"; st.textContent = `${abertos.length} sem data de fim`; }
+  else if (livre <= HORIZONTE) { st.className = "cons-score bom"; st.textContent = `Sem dívidas em ${nomeMes(livre)}`; }
+  else { st.className = "cons-score critico"; st.textContent = "Passa de 2032"; }
+}
+
+function cardFinanciamento(m) {
+  const F = (v) => fmtMoeda(v, m.moeda), p = progressoFinanciamento(m), hoje = hojeISO();
+  const pct = m.alvo ? Math.min(100, (p.atual / m.alvo) * 100) : 0;
+  const curto = (d) => `${MESES_CURTOS[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`;
+  const econ = r2(p.base.juros - p.sim.juros), mesesAntes = p.base.rows.length - p.sim.rows.length;
+  const ant = [...(m.antecipacoes || [])].sort((a, b) => a.data.localeCompare(b.data));
+  const antTot = ant.reduce((a, x) => a + x.valor, 0);
+  const extraMes = {}; p.sim.rows.forEach(r => (extraMes[r.data] = r));
+  return `<div class="card meta-card">
+    <div class="card-head"><h3>${esc(m.nome)}</h3>
+      <span><button class="icon-btn" data-editar-meta="${esc(m.id)}" title="Editar">✏️</button><button class="icon-btn" data-remover-meta="${esc(m.id)}" title="Remover">🗑️</button></span></div>
+    <div class="big">${F(p.saldoHoje)} <span class="muted" style="font-size:15px;font-weight:400">em dívida hoje</span></div>
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    <div class="row"><span>${Math.round(pct)}% amortizado de ${F(m.alvo)}</span><span>Parcela ${F(m.parcela)}/mês · ${String(m.taxa).replace(".", ",")}% a.m.</span></div>
+    ${p.quitacao ? `<div class="row"><span>Quitação prevista</span><strong class="pos">${nomeMes(mesDe(p.quitacao))}</strong></div>` : `<div class="row"><span class="warn-txt">Defina parcela, taxa e 1ª parcela (✏️) para ver o plano.</span></div>`}
+    ${ant.length && p.base.quitacao ? `<div class="row"><span>Sem antecipações: ${nomeMes(mesDe(p.base.quitacao))}</span><span class="pos">${mesesAntes} meses antes · poupa ${F(econ)} de juros</span></div>` : ""}
+    <div class="row"><span>Juros até ao fim</span><span>${F(p.sim.juros)}</span></div>
+    ${m.nota ? `<p class="muted small">${esc(m.nota)}</p>` : ""}
+    <details class="plano"><summary>Antecipações planeadas (${ant.length}) · ${F(antTot)}</summary>
+      <ul class="ant-lista">${ant.map(a => `<li><span>${dataCurta(a.data)}</span><span>${esc(a.nota || "Antecipação")}</span><strong>${F(a.valor)}</strong>${a.pago ? `<span class="pos small">feito</span>` : `<button class="icon-btn" data-rem-ant="${esc(m.id)}|${esc(a.id)}" title="Remover">✕</button>`}</li>`).join("") || `<li class="muted">Nenhuma antecipação planeada.</li>`}</ul>
+      <form class="add ant-form" data-add-ant="${esc(m.id)}"><input type="month" required value="${mesDe(hoje)}"><input type="number" step="0.01" min="0" placeholder="Valor ${m.moeda === "BRL" ? "R$" : "€"}" required><input type="text" placeholder="Origem (ex.: 13º)"><button class="btn btn-sm" type="submit">Planear</button></form>
+    </details>
+    ${p.sim.rows.length ? `<details class="plano"><summary>Ver tabela de amortização (${p.sim.rows.length} parcelas)</summary>
+      <table><thead><tr><th>Mês</th><th class="num">Parcela</th><th class="num">Antecipação</th><th class="num">Juros</th><th class="num">Saldo</th></tr></thead><tbody>
+      ${p.sim.rows.map(r => `<tr class="${r.data <= hoje ? "pago" : ""}${r.saldo === 0 ? " quit" : ""}"><td>${curto(r.data)}</td><td class="num">${F(r.parcela)}</td><td class="num">${r.extra ? F(r.extra) : "—"}</td><td class="num">${F(r.juros)}</td><td class="num">${F(r.saldo)}</td></tr>`).join("")}
+      </tbody></table></details>` : ""}
+    <form class="add" data-aporte="${esc(m.id)}"><input type="number" step="0.01" placeholder="Antecipação feita hoje ${m.moeda === "BRL" ? "R$" : "€"}" required><button class="btn btn-sm" type="submit">+ Registar</button></form>
+  </div>`;
 }
 
 function limparFormMeta() {
@@ -935,9 +1063,10 @@ $("orcamento-lista").addEventListener("click", (e) => {
 
 $("form-meta").addEventListener("submit", (e) => {
   e.preventDefault();
-  const item = { moeda: $("m-moeda").value, nome: $("m-nome").value.trim(), alvo: Number($("m-alvo").value) || 0, atual: Number($("m-atual").value) || 0, prazo: $("m-prazo").value, nota: $("m-nota").value.trim(), vinculo: $("m-vinculo").value.trim() };
+  const fin = { tipo: $("m-parcela").value ? "financiamento" : "meta", parcela: Number($("m-parcela").value) || 0, taxa: Number($("m-taxa").value) || 0, primeiraParcela: $("m-primeira").value ? $("m-primeira").value + "-01" : "" };
+  const item = { ...fin, moeda: $("m-moeda").value, nome: $("m-nome").value.trim(), alvo: Number($("m-alvo").value) || 0, atual: Number($("m-atual").value) || 0, prazo: $("m-prazo").value, nota: $("m-nota").value.trim(), vinculo: $("m-vinculo").value.trim() };
   if (editandoMetaId) Object.assign(state.metas.find(m => m.id === editandoMetaId), item);
-  else state.metas.push({ id: uid(), ...item });
+  else state.metas.push(normalizarMeta({ id: uid(), ...item }));
   salvar(); limparFormMeta(); renderMetas(); toast("Meta guardada.");
 });
 $("m-cancelar").addEventListener("click", limparFormMeta);
@@ -945,16 +1074,31 @@ $("metas-lista").addEventListener("click", (e) => {
   const ed = e.target.closest("[data-editar-meta]"), rm = e.target.closest("[data-remover-meta]");
   if (ed) {
     const m = state.metas.find(x => x.id === ed.dataset.editarMeta);
-    $("m-moeda").value = m.moeda || "EUR"; $("m-nome").value = m.nome; $("m-alvo").value = m.alvo; $("m-atual").value = m.atual; $("m-prazo").value = m.prazo || ""; $("m-nota").value = m.nota || ""; $("m-vinculo").value = m.vinculo || "";
+    $("m-moeda").value = m.moeda || "EUR"; $("m-nome").value = m.nome;
+    $("m-parcela").value = m.parcela || ""; $("m-taxa").value = m.taxa || ""; $("m-primeira").value = (m.primeiraParcela || "").slice(0, 7); $("m-alvo").value = m.alvo; $("m-atual").value = m.atual; $("m-prazo").value = m.prazo || ""; $("m-nota").value = m.nota || ""; $("m-vinculo").value = m.vinculo || "";
     editandoMetaId = m.id; $("m-salvar").textContent = "Guardar meta"; $("meta-form-titulo").textContent = "Editar meta"; $("m-cancelar").hidden = false;
     $("form-meta").scrollIntoView({ behavior: "smooth" });
   }
+  const ra = e.target.closest("[data-rem-ant]");
+  if (ra) { const [mid, aid] = ra.dataset.remAnt.split("|"); const m = state.metas.find(x => x.id === mid); m.antecipacoes = m.antecipacoes.filter(a => a.id !== aid); salvar(); renderMetas(); return; }
   if (rm && confirm("Remover esta meta?")) { state.metas = state.metas.filter(x => x.id !== rm.dataset.removerMeta); salvar(); renderMetas(); }
 });
 $("metas-lista").addEventListener("submit", (e) => {
+  const fa = e.target.closest("form[data-add-ant]");
+  if (fa) {
+    e.preventDefault();
+    const m = state.metas.find(x => x.id === fa.dataset.addAnt), [mes, val, nota] = fa.querySelectorAll("input");
+    const v = Number(val.value); if (!m || !(v > 0) || !mes.value) return;
+    m.antecipacoes.push({ id: uid(), data: mes.value + "-01", valor: v, nota: nota.value.trim() || "Antecipação", pago: false });
+    salvar(); renderMetas(); toast("Antecipação planeada."); return;
+  }
   const f = e.target.closest("form[data-aporte]"); if (!f) return;
   e.preventDefault();
   const m = state.metas.find(x => x.id === f.dataset.aporte), v = Number(f.querySelector("input").value);
+  if (m && v && m.tipo === "financiamento") {
+    m.antecipacoes.push({ id: uid(), data: hojeISO(), valor: v, nota: "Antecipação feita", pago: true });
+    salvar(); renderMetas(); toast(`Antecipação de ${fmtMoeda(v, m.moeda)} registada em "${m.nome}".`); return;
+  }
   if (m && v) { m.atual = Math.max(0, (m.atual || 0) + v); salvar(); renderMetas(); toast(`${fmtMoeda(v, m.moeda)} adicionado a "${m.nome}".`); }
 });
 

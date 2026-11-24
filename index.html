@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=9">
+  <link rel="stylesheet" href="styles.css?v=11">
 </head>
 <body>
 
@@ -166,16 +166,26 @@
 
     <!-- METAS -->
     <section class="view" id="view-metas" hidden>
+      <div class="card" id="rumo">
+        <div class="card-head"><h3>Rumo a 2032 sem dívidas</h3><span class="cons-score" id="rumo-status">—</span></div>
+        <div class="legend"><i class="dot" style="background:var(--neg)"></i>Dívidas e parcelas restantes <i class="dot" style="background:var(--pos)"></i>Reserva de emergência <i class="dot" style="background:var(--c2)"></i>Saldo da conta</div>
+        <div id="rumo-chart" class="chart"></div>
+        <ul id="rumo-dividas" class="rumo-lista"></ul>
+        <p class="muted small">Projeção com os lançamentos do app (parcelas e recorrentes) e as metas. Valores em reais convertidos ao câmbio de hoje. Dívidas sem data de fim aparecem a amarelo — edite a série em Lançamentos para terminar no mês certo.</p>
+      </div>
       <div id="metas-lista" class="metas-grid"></div>
       <div class="card">
         <div class="card-head"><h3 id="meta-form-titulo">Nova meta</h3></div>
         <form id="form-meta" class="form-grid">
           <label>Nome<input type="text" id="m-nome" placeholder="Ex.: Fundo de emergência" required></label>
           <label>Moeda<select id="m-moeda"><option value="EUR">Euro (€)</option><option value="BRL">Real (R$)</option></select></label>
-          <label>Valor alvo<input type="number" step="0.01" min="0" id="m-alvo" required></label>
+          <label>Valor alvo / saldo devedor<input type="number" step="0.01" min="0" id="m-alvo" required></label>
           <label>Já pago antes (fora dos lançamentos)<input type="number" step="0.01" min="0" id="m-atual" value="0"></label>
           <label>Prazo<input type="date" id="m-prazo"></label>
           <label>Ligar aos lançamentos que começam por<input type="text" id="m-vinculo" placeholder="ex.: Leasing Itaú (opcional)"></label>
+          <label>Parcela mensal (se for empréstimo)<input type="number" step="0.01" min="0" id="m-parcela" placeholder="opcional"></label>
+          <label>Taxa de juros % ao mês<input type="number" step="0.001" min="0" id="m-taxa" placeholder="ex.: 1,37"></label>
+          <label>1ª parcela (mês)<input type="month" id="m-primeira"></label>
           <label class="wide">Notas<input type="text" id="m-nota" placeholder="opcional"></label>
           <div class="form-actions">
             <button type="button" class="btn btn-ghost" id="m-cancelar" hidden>Cancelar</button>
@@ -270,6 +280,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>
