@@ -720,8 +720,15 @@ function simularFinanciamento(m, comAntecipacoes = true) {
   const i = (m.taxa || 0) / 100, rows = [];
   let bal = m.alvo, juros = 0, d = m.primeiraParcela || `${mesDe(hojeISO())}-01`;
   const ext = {};
-  if (comAntecipacoes) (m.antecipacoes || []).forEach(a => { const k = mesDe(a.data); ext[k] = (ext[k] || 0) + a.valor; });
-  for (let n = 0; n < 600 && bal > 0.01 && m.parcela > 0; n++) {
+  if (comAntecipacoes) {
+    (m.antecipacoes || []).forEach(a => { const k = mesDe(a.data); ext[k] = (ext[k] || 0) + a.valor; });
+    // amortizações extra lançadas no orçamento (descrição começa pelo vínculo)
+    const v = (m.vinculo || "").trim().toLowerCase();
+    if (v) state.transacoes.filter(t => t.tipo === "despesa" && t.descricao.toLowerCase().startsWith(v)).forEach(t => {
+      const k = mesDe(t.data); ext[k] = (ext[k] || 0) + (m.moeda === "BRL" ? (t.valorBRL || r2(t.valor * cambio())) : t.valor);
+    });
+  }
+  for (let n = 0; n < 600 && bal > 0.01 && m.parcela > 0 && (n < 240 || bal < m.alvo * 3); n++) {
     const j = r2(bal * i); juros += j; bal += j;
     const p = Math.min(m.parcela, bal); bal -= p;
     const e = Math.min(ext[mesDe(d)] || 0, bal); bal -= e;
@@ -805,7 +812,11 @@ function dividasRumo() {
   const hoje = hojeISO(), out = [];
   // séries/lançamentos de crédito ainda pendentes (exceto financiamentos tratados por metas)
   const grupos = {};
-  state.transacoes.filter(t => t.categoria === "Crédito" && t.tipo === "despesa" && !t.pago && t.data >= `${mesDe(hoje)}-01`).forEach(t => {
+  const fins = state.metas.filter(m => m.tipo === "financiamento");
+  const nomesFin = fins.map(m => m.nome.replace(/^(Antecipar|Quitar) /i, "").toLowerCase());
+  const vincFin = fins.map(m => (m.vinculo || "").toLowerCase()).filter(Boolean);
+  state.transacoes.filter(t => t.categoria === "Crédito" && t.tipo === "despesa" && !t.pago && t.data >= `${mesDe(hoje)}-01`
+    && !nomesFin.includes(t.descricao.toLowerCase()) && !vincFin.some(v => t.descricao.toLowerCase().startsWith(v))).forEach(t => {
     const k = t.descricao.replace(/ —.*$/, "");
     (grupos[k] = grupos[k] || []).push(t);
   });
@@ -818,7 +829,7 @@ function dividasRumo() {
     if (m.tipo === "financiamento" && m.parcela > 0) {
       const p = progressoFinanciamento(m), fim = p.quitacao ? mesDe(p.quitacao) : HORIZONTE;
       const rows = p.sim.rows;
-      out.push({ nome: m.nome.replace(/^Antecipar /, ""), fim, parcela: emEUR(m.parcela, m.moeda), restante: emEUR(p.saldoHoje, m.moeda), aberto: !p.quitacao || fim > HORIZONTE,
+      out.push({ nome: m.nome.replace(/^(Antecipar|Quitar) /i, ""), fim, parcela: emEUR(m.parcela, m.moeda), restante: emEUR(p.saldoHoje, m.moeda), aberto: !p.quitacao || fim > HORIZONTE,
         porMes: (ym) => { const r = rows.filter(x => mesDe(x.data) <= ym).pop(); return emEUR(r ? r.saldo : m.alvo, m.moeda); } });
     } else if (m.tipo !== "financiamento" && !m.vinculo && m.prazo && /quitar|pagamento|crédito|divida|dívida/i.test(m.nome) && m.atual < m.alvo) {
       const fim = mesDe(m.prazo), rest = emEUR(m.alvo - m.atual, m.moeda);
@@ -881,7 +892,9 @@ function cardFinanciamento(m) {
     <div class="big">${F(p.saldoHoje)} <span class="muted" style="font-size:15px;font-weight:400">em dívida hoje</span></div>
     <div class="bar"><i style="width:${pct}%"></i></div>
     <div class="row"><span>${Math.round(pct)}% amortizado de ${F(m.alvo)}</span><span>Parcela ${F(m.parcela)}/mês · ${String(m.taxa).replace(".", ",")}% a.m.</span></div>
-    ${p.quitacao ? `<div class="row"><span>Quitação prevista</span><strong class="pos">${nomeMes(mesDe(p.quitacao))}</strong></div>` : `<div class="row"><span class="warn-txt">Defina parcela, taxa e 1ª parcela (✏️) para ver o plano.</span></div>`}
+    ${p.quitacao ? `<div class="row"><span>Quitação prevista</span><strong class="pos">${nomeMes(mesDe(p.quitacao))}</strong></div>`
+      : m.parcela > 0 ? `<div class="row"><span class="neg">A parcela quase não cobre os juros (${F(r2(m.alvo * m.taxa / 100))}/mês): sem amortizações extra não termina.</span></div>`
+      : `<div class="row"><span class="warn-txt">Defina parcela, taxa e 1ª parcela (✏️) para ver o plano.</span></div>`}
     ${ant.length && p.base.quitacao ? `<div class="row"><span>Sem antecipações: ${nomeMes(mesDe(p.base.quitacao))}</span><span class="pos">${mesesAntes} meses antes · poupa ${F(econ)} de juros</span></div>` : ""}
     <div class="row"><span>Juros até ao fim</span><span>${F(p.sim.juros)}</span></div>
     ${m.nota ? `<p class="muted small">${esc(m.nota)}</p>` : ""}
