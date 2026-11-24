@@ -567,12 +567,12 @@ function renderLancamentos() {
     (!tipo || t.tipo === tipo) && (!cat || t.categoria === cat) &&
     (!status || (status === "pago" ? t.pago : !t.pago)) &&
     (!busca || `${t.descricao} ${t.categoria} ${t.nota}`.toLowerCase().includes(busca))
-  ).sort((a, b) => b.data.localeCompare(a.data) || a.descricao.localeCompare(b.descricao));
+  ).sort((a, b) => dataVenc(a).localeCompare(dataVenc(b)) || (a.tipo === b.tipo ? 0 : a.tipo === "receita" ? -1 : 1) || a.descricao.localeCompare(b.descricao, "pt"));
 
   $("lista-transacoes").innerHTML = lista.length ? lista.map(t => `
     <tr class="${t.pago ? "pago" : ""}">
       <td><button class="chk ${t.pago ? "on" : ""}" data-confirmar="${esc(t.id)}" title="${t.pago ? "Desfazer confirmação" : "Confirmar"}">✓</button></td>
-      <td>${dataCurta(t.data)}${t.vencimento ? `<span class="sub">vence dia ${t.vencimento}</span>` : ""}${t.pago ? `<span class="sub pos">${t.tipo === "receita" ? "recebido" : "pago"} ${dataCurta(t.pagoEm)}</span>` : ""}</td>
+      <td>${dataCurta(dataVenc(t))}${t.vencimento ? `<span class="sub">vencimento</span>` : ""}${t.pago ? `<span class="sub pos">${t.tipo === "receita" ? "recebido" : "pago"} ${dataCurta(t.pagoEm)}</span>` : ""}</td>
       <td>${esc(t.descricao)}${t.serieId ? ' <span title="Recorrente">🔄</span>' : ""}${t.valorBRL ? `<span class="sub">${fmtBRL(t.valorBRL)}${t.nota && !t.nota.startsWith("R$") ? " · " + esc(t.nota) : ""}</span>` : t.nota ? `<span class="sub">${esc(t.nota)}</span>` : ""}</td>
       <td><span class="tag">${esc(t.categoria)}</span></td>
       <td class="num ${t.tipo === "receita" ? "pos" : "neg"}"><button class="valor-btn" data-ajustar="${esc(t.id)}" title="Ajustar valor">${t.tipo === "receita" ? "+" : "−"}${fmt(t.valor)}</button></td>
