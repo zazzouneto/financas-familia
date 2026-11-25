@@ -101,6 +101,12 @@ function salvar() { LS.set(STORE_KEY, JSON.stringify(state)); agendarNuvem(); }
 
 /* ---------- Nuvem (claude.ai): os mesmos dados no telemóvel e no computador ---------- */
 // Documentos: fin/meta (metas, config, anos, rev), fin/tx-AAAA (lançamentos do ano), fin/painel (resumo para o e-mail diário), fin/cambio (escrito pela tarefa da manhã).
+// Erros vão para a nuvem (fin/debug) para se poder diagnosticar sem acesso à consola.
+function registarErro(onde, err) {
+  try { console.error(onde, err); if (nuvem.db) nuvem.db.doc("fin/debug").set({ quando: new Date().toISOString(), onde, msg: String(err && err.message || err), stack: String(err && err.stack || "").slice(0, 1500), ua: navigator.userAgent }); } catch (e) {}
+}
+window.addEventListener("error", (e) => registarErro("window", e.error || e.message));
+window.addEventListener("unhandledrejection", (e) => registarErro("promise", e.reason));
 const nuvem = { db: null, rev: null, enviados: {}, gravando: false, pendente: false, timer: null, pronta: false, estado: "local" };
 function setNuvem(estado, txt) {
   nuvem.estado = estado; const el = $("nuvem-pill"); if (!el) return;
@@ -131,7 +137,7 @@ async function iniciarNuvem() {
   }, (err) => { clearTimeout(timer); setNuvem("off", "⚠️ nuvem indisponível"); console.warn("nuvem", err); });
   db.doc("fin/cambio").onSnapshot((snap) => {
     if (!snap.exists) return;
-    const c = snap.data(), v = Number(c.valor);
+    const c = JSON.parse(JSON.stringify(snap.data())), v = Number(c.valor);
     if (v > 0 && Math.abs(v - cambio()) > 0.00005 && String(c.data || "") > String(state.config.cambio?.data || "")) {
       state.config.cambioAnterior = { ...state.config.cambio };
       state.config.cambio = { valor: v, data: c.data, fonte: c.fonte || "tarefa diária", pct: c.pct };
@@ -142,10 +148,11 @@ async function iniciarNuvem() {
 async function carregarDaNuvem(meta) {
   setNuvem("sync", "☁️ a receber…");
   try {
+    meta = JSON.parse(JSON.stringify(meta)); // os dados da nuvem chegam congelados (só leitura): trabalhar numa cópia
     const anos = meta.anos || [];
     const docs = await Promise.all(anos.map(a => nuvem.db.doc("fin/tx-" + a).get()));
     const tx = []; nuvem.enviados = {};
-    docs.forEach((d, i) => { const itens = (d.exists && d.data().itens) || []; nuvem.enviados[anos[i]] = JSON.stringify(itens); itens.forEach(t => tx.push(normalizarTransacao(t))); });
+    docs.forEach((d, i) => { const itens = JSON.parse(JSON.stringify((d.exists && d.data().itens) || [])); nuvem.enviados[anos[i]] = JSON.stringify(itens); itens.forEach(t => tx.push(normalizarTransacao(t))); });
     const base = estadoVazio();
     state = { ...base, versao: meta.versao || 2, transacoes: tx, metas: (meta.metas || []).map(normalizarMeta), orcamentos: meta.orcamentos || [], config: { ...base.config, ...(meta.config || {}) } };
     nuvem.rev = meta.rev; nuvem.pronta = true;
@@ -1395,7 +1402,16 @@ document.addEventListener("click", (e) => {
 });
 $("modal-cancelar").addEventListener("click", fecharModal);
 $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") fecharModal(); });
-$("modal-form").addEventListener("submit", (e) => { e.preventDefault(); const f = abrirModal._ok; if (f && f() !== false) fecharModal(); });
+function okModal(e) {
+  if (e) e.preventDefault();
+  const form = $("modal-form");
+  if (!form.checkValidity()) { form.reportValidity(); return; }
+  const f = abrirModal._ok;
+  try { if (f && f() !== false) fecharModal(); }
+  catch (err) { registarErro("modal", err); toast("Erro: " + (err && err.message || err)); }
+}
+$("modal-form").addEventListener("submit", okModal);
+$("modal-ok").addEventListener("click", okModal);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("modal").hidden) fecharModal(); });
 $("btn-export-csv").addEventListener("click", exportarCSV);
 $("form-senha").addEventListener("submit", (e) => {
@@ -1413,6 +1429,26 @@ if (!NO_CLAUDE && "serviceWorker" in navigator && location.protocol.startsWith("
   window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js").catch(console.error));
 }
 (NO_CLAUDE || LS.get(SESSION_KEY) === "true") ? mostrarApp() : mostrarLogin();
+// No claude.ai a página corre numa moldura que bloqueia o envio nativo de formulários:
+// o clique em "Pago ✓", "Adicionar", etc. não fazia nada. Aqui o próprio app trata o clique e o Enter.
+function enviarForm(form) {
+  if (!form.checkValidity()) { form.reportValidity(); return; }
+  form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+}
+if (NO_CLAUDE) {
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest('button[type="submit"], button:not([type]), input[type="submit"]');
+    const form = b && b.closest("form");
+    if (!form) return;
+    e.preventDefault(); enviarForm(form);
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    const el = e.target; if (!el.matches || !el.matches("input:not([type=checkbox]):not([type=radio])")) return;
+    const form = el.closest("form"); if (!form) return;
+    e.preventDefault(); enviarForm(form);
+  }, true);
+}
 if (NO_CLAUDE) { $("btn-logout").hidden = true; iniciarNuvem(); }
 else {
   // Versão antiga (GitHub Pages): aviso para passar para o link com nuvem.
