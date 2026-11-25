@@ -282,8 +282,23 @@ function abrirModal({ titulo, sub = "", campos, ok = "Confirmar", onOk }) {
   $("modal-titulo").textContent = titulo; $("modal-sub").textContent = sub;
   $("modal-campos").innerHTML = campos; $("modal-ok").textContent = ok;
   $("modal").hidden = false;
+  posicionarModal();
   const f = $("modal-campos").querySelector("input"); if (f) setTimeout(() => f.focus(), 30);
   abrirModal._ok = onOk;
+}
+// No claude.ai a página pode ficar com a altura toda do conteúdo (sobretudo no telemóvel):
+// um modal "fixo" aparecia no topo, fora da vista. Por isso abre junto de onde se tocou.
+let ultimoToqueY = null;
+document.addEventListener("pointerdown", (e) => { ultimoToqueY = e.pageY; }, true);
+function posicionarModal() {
+  const m = $("modal"), card = m.querySelector(".modal-card");
+  if (!NO_CLAUDE) { m.style.cssText = ""; card.style.marginTop = ""; return; }
+  const alturaDoc = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+  m.style.cssText = `position:absolute;top:0;left:0;right:0;bottom:auto;height:${alturaDoc}px;align-items:start;place-items:start center`;
+  const h = card.offsetHeight || 320;
+  const y = ultimoToqueY == null ? window.scrollY + 40 : ultimoToqueY - h / 2;
+  card.style.marginTop = Math.max(8, Math.min(y, alturaDoc - h - 24)) + "px";
+  try { card.scrollIntoView({ block: "nearest" }); } catch (e) {}
 }
 function fecharModal() { $("modal").hidden = true; abrirModal._ok = null; }
 
@@ -706,7 +721,12 @@ function limparForm() {
   $("btn-cancelar").hidden = true;
   $("f-recorrente").disabled = false;
   $("f-serie-wrap").hidden = true;
-  $("f-moeda").value = "EUR"; atualizarConv();
+  $("f-moeda").value = "EUR"; atualizarConv(); atualizarPagoWrap();
+}
+function atualizarPagoWrap() {
+  const d = $("f-data").value, mostra = !editandoId && !!d && d <= hojeISO();
+  $("f-pago-wrap").hidden = !mostra;
+  if (mostra && !atualizarPagoWrap._mexeu) $("f-pago").checked = true;
 }
 function atualizarConv() {
   const v = Number($("f-valor").value);
@@ -717,7 +737,7 @@ function editarTransacao(id) {
   const t = state.transacoes.find(x => x.id === id);
   if (!t) return;
   document.querySelector(`input[name="tipo"][value="${t.tipo}"]`).checked = true;
-  $("f-data").value = t.data;
+  $("f-data").value = t.data; $("f-pago-wrap").hidden = true;
   $("f-descricao").value = t.descricao;
   $("f-categoria").value = t.categoria;
   $("f-moeda").value = t.valorBRL ? "BRL" : "EUR";
@@ -749,6 +769,8 @@ function guardarTransacao(e) {
     vencimento: $("f-vencimento").value || null,
   });
   if (!base.data || !base.descricao || !(base.valor > 0)) { toast("Preencha data, descrição e um valor maior que zero."); return; }
+  const jaPago = !editandoId && $("f-pago").checked && base.data <= hojeISO();
+  const marcarPago = (t) => { t.pago = true; t.pagoEm = t.data; if (temSaldoReal()) state.config.saldoReal.valor = r2(state.config.saldoReal.valor + sinal(t)); };
 
   if (editandoId) {
     const i = state.transacoes.findIndex(t => t.id === editandoId);
@@ -765,11 +787,12 @@ function guardarTransacao(e) {
     toast(n ? `Lançamento e mais ${n} da série atualizados.` : "Lançamento atualizado.");
   } else if ($("f-recorrente").checked) {
     const serieId = uid();
-    for (let i = 0; i < 12; i++) state.transacoes.push({ ...base, id: uid(), serieId, data: somarMesesData(base.data, i) });
-    toast("Criados 12 lançamentos mensais.");
+    for (let i = 0; i < 12; i++) { const t = { ...base, id: uid(), serieId, data: somarMesesData(base.data, i) }; if (i === 0 && jaPago) marcarPago(t); state.transacoes.push(t); }
+    toast("Criados 12 lançamentos mensais." + (jaPago ? " O primeiro já conta como pago." : ""));
   } else {
+    if (jaPago) marcarPago(base);
     state.transacoes.push(base);
-    toast("Lançamento adicionado.");
+    toast(jaPago ? (base.tipo === "receita" ? "Recebimento registado — saldo real atualizado." : "Pagamento registado — saldo real atualizado.") : "Lançamento adicionado.");
   }
   mesAtual = mesDe(base.data);
   salvar(); limparForm(); render();
@@ -1283,6 +1306,7 @@ $("mes-seguinte").addEventListener("click", () => { mesAtual = somarMeses(mesAtu
 $("mes-hoje").addEventListener("click", () => { mesAtual = mesDe(hojeISO()); render(); });
 
 $("form-transacao").addEventListener("submit", guardarTransacao);
+$("f-data").addEventListener("input", atualizarPagoWrap);
 $("btn-cancelar").addEventListener("click", limparForm);
 $("lista-transacoes").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-acao]"); if (!b) return;

@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=18">
 </head>
 <body>
 
@@ -115,6 +115,7 @@
           <label>Categoria<input type="text" id="f-categoria" list="lista-categorias" placeholder="Ex.: Contas Casa" required></label>
           <label>Valor<span class="money"><select id="f-moeda"><option value="EUR">€</option><option value="BRL">R$</option></select><input type="number" step="0.01" min="0" id="f-valor" placeholder="0,00" required></span><small id="f-conv" class="muted"></small></label>
           <label>Dia de vencimento<input type="number" min="1" max="31" id="f-vencimento" placeholder="opcional"></label>
+          <label class="check" id="f-pago-wrap"><input type="checkbox" id="f-pago" checked> Já está pago / recebido (desconta do saldo real)</label>
           <label class="check"><input type="checkbox" id="f-recorrente"> Repetir todos os meses (12 meses)</label>
           <label class="check" id="f-serie-wrap" hidden><input type="checkbox" id="f-serie" checked> Aplicar também aos próximos desta série (valor, descrição, categoria e vencimento)</label>
           <div class="form-actions">
@@ -279,6 +280,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>
