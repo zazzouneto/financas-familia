@@ -111,7 +111,8 @@ window.addEventListener("unhandledrejection", (e) => registarErro("promise", e.r
 const nuvem = { db: null, rev: null, enviados: {}, gravando: false, pendente: false, timer: null, pronta: false, estado: "local" };
 function setNuvem(estado, txt) {
   nuvem.estado = estado; const el = $("nuvem-pill"); if (!el) return;
-  el.hidden = !NO_CLAUDE; el.className = "nuvem-pill " + estado; el.textContent = txt;
+  // Só aparece quando há problema com a nuvem; com tudo sincronizado fica escondido.
+  el.hidden = !NO_CLAUDE || estado !== "off"; el.className = "nuvem-pill " + estado; el.textContent = txt;
 }
 function porAno(tx) { const m = {}; tx.forEach(t => { const a = t.data.slice(0, 4); (m[a] = m[a] || []).push(t); }); return m; }
 function compacto(t) { const o = {}; for (const [k, v] of Object.entries(t)) if (v !== null && v !== "" && v !== false && v !== undefined) o[k] = v; return o; }

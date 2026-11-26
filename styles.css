@@ -375,3 +375,8 @@ details.plano tr.pago td { opacity: .5; }
 .tema-opcoes button { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
 .tema-opcoes button.on { outline: 2px solid var(--brand); }
 .tema-opcoes i { width: 16px; height: 16px; border-radius: 50%; display: inline-block; }
+
+.zz-logo { width: 30px; height: 30px; flex: none; filter: drop-shadow(0 2px 6px rgba(40,10,70,.25)); }
+.brand-lg .zz-logo { width: 44px; height: 44px; }
+.brand-fin { color: var(--brand); font-weight: 700; }
+:root:not([data-tema="roxo"]) .brand-fin { color: #f0b85a; }
