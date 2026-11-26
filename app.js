@@ -135,12 +135,17 @@ async function iniciarNuvem() {
     if (meta.rev && meta.rev === nuvem.rev) { nuvem.pronta = true; setNuvem("ok", "☁️ sincronizado"); return; }
     await carregarDaNuvem(meta);
   }, (err) => { clearTimeout(timer); setNuvem("off", "⚠️ nuvem indisponível"); console.warn("nuvem", err); });
+  db.doc("fin/cambio-hist").onSnapshot((snap) => {
+    if (!snap.exists) return;
+    try { juntarHist(lerHist(snap.data())); renderEuro(); } catch (e) { registarErro("hist-snap", e); }
+  }, (err) => registarErro("hist-sub", err));
   db.doc("fin/cambio").onSnapshot((snap) => {
     if (!snap.exists) return;
     const c = JSON.parse(JSON.stringify(snap.data())), v = Number(c.valor);
     if (v > 0 && Math.abs(v - cambio()) > 0.00005 && String(c.data || "") > String(state.config.cambio?.data || "")) {
       state.config.cambioAnterior = { ...state.config.cambio };
       state.config.cambio = { valor: v, data: c.data, fonte: c.fonte || "tarefa diária", pct: c.pct };
+      try { registarCotacaoHist(v, c.data); } catch (e) { registarErro("hist-reg", e); }
       aplicarCambio(); salvar(); render();
     }
   }, () => {});
@@ -459,7 +464,80 @@ function linhaProgresso(nome, gasto, limite, extra = "", f = fmt) {
   </div>`;
 }
 
+/* ---------- Gráfico do euro (semana, mês, ano, 5 anos) ---------- */
+// Histórico em fin/cambio-hist {pts: [[AAAA-MM-DD, taxa], ...]}: diário no último ano, semanal antes.
+const HIST_KEY = "fin_cambio_hist";
+let cambioHist = []; try { cambioHist = JSON.parse(LS.get(HIST_KEY) || "[]"); } catch (e) { cambioHist = []; }
+let euroPeriodo = Number(LS.get("fin_euro_periodo")) || 30;
+function juntarHist(pts) {
+  const m = new Map(cambioHist.map(p => [p[0], p[1]]));
+  pts.forEach(p => { if (p && p[0] && p[1] > 0) m.set(p[0], +p[1]); });
+  cambioHist = [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  LS.set(HIST_KEY, JSON.stringify(cambioHist));
+}
+// Guardado como texto "AAAA-MM-DD:taxa,..." (a base de dados não aceita listas dentro de listas).
+function lerHist(doc) {
+  const p = doc && doc.pts;
+  if (typeof p === "string") return p.split(",").map(x => { const [d, v] = x.split(":"); return [d, Number(v)]; });
+  if (Array.isArray(p)) return p.map(x => Array.isArray(x) ? [x[0], Number(x[1])] : [x.d, Number(x.v)]);
+  return [];
+}
+const histTexto = () => cambioHist.map(p => `${p[0]}:${p[1]}`).join(",");
+function registarCotacaoHist(valor, quando) {
+  const d = String(quando || hojeISO()).slice(0, 10); if (!(valor > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+  const antes = cambioHist.find(p => p[0] === d);
+  if (antes && Math.abs(antes[1] - valor) < 0.00005) return;
+  juntarHist([[d, +(+valor).toFixed(4)]]);
+  if (nuvem.db && nuvem.pronta) nuvem.db.doc("fin/cambio-hist").set({ pts: histTexto() }).catch(e => registarErro("hist", e));
+}
+function renderEuro() {
+  const graf = $("euro-graf"); if (!graf) return;
+  document.querySelectorAll("#euro-periodos button").forEach(b => b.classList.toggle("on", Number(b.dataset.p) === euroPeriodo));
+  const atual = cambio();
+  $("euro-atual").textContent = fmtTaxa(atual);
+  const desde = somarDias(hojeISO(), -euroPeriodo);
+  let pts = cambioHist.filter(p => p[0] >= desde);
+  const fonte = state.config.cambio || {};
+  const hojeD = String(fonte.data || "").slice(0, 10) || hojeISO();
+  if (atual > 0 && (!pts.length || pts[pts.length - 1][0] < hojeD)) pts = [...pts, [hojeD, atual]];
+  else if (pts.length && pts[pts.length - 1][0] === hojeD) pts = [...pts.slice(0, -1), [hojeD, atual]];
+  $("euro-nota").textContent = fonte.data ? `atualizado ${dataCurta(hojeD)}` : "";
+  if (pts.length < 2) { graf.innerHTML = `<p class="muted small">Ainda sem histórico suficiente para este período.</p>`; $("euro-var").textContent = ""; $("euro-rodape").innerHTML = ""; return; }
+  const ini = pts[0][1], fim = pts[pts.length - 1][1], pct = (fim / ini - 1) * 100;
+  const nomes = { 7: "na semana", 30: "no mês", 365: "no ano", 1826: "em 5 anos" };
+  // Euro mais barato = o salário em reais rende mais euros (bom para a família).
+  $("euro-var").className = pct <= 0 ? "pos" : "neg";
+  $("euro-var").textContent = `${pct > 0 ? "▲" : "▼"} ${Math.abs(pct).toFixed(2).replace(".", ",")}% ${nomes[euroPeriodo] || ""}`;
+  const W = 600, H = 170, pad = { l: 8, r: 8, t: 22, b: 8 };
+  const vs = pts.map(p => p[1]), mn = Math.min(...vs), mx = Math.max(...vs), rg = (mx - mn) || 0.01;
+  const t0 = new Date(pts[0][0] + "T12:00:00").getTime(), t1 = new Date(pts[pts.length - 1][0] + "T12:00:00").getTime(), tr = (t1 - t0) || 1;
+  const X = (d) => pad.l + (new Date(d + "T12:00:00").getTime() - t0) / tr * (W - pad.l - pad.r);
+  const Y = (v) => pad.t + (1 - (v - mn) / rg) * (H - pad.t - pad.b);
+  const linha = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+  const cor = pct <= 0 ? "var(--pos)" : "var(--neg)";
+  const iMx = vs.indexOf(mx), iMn = vs.indexOf(mn);
+  graf.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Cotação do euro em reais">
+      <defs><linearGradient id="eg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${cor}" stop-opacity=".28"/><stop offset="1" stop-color="${cor}" stop-opacity="0"/></linearGradient></defs>
+      <path d="${linha}L${X(pts[pts.length - 1][0]).toFixed(1)},${H - pad.b}L${pad.l},${H - pad.b}Z" fill="url(#eg)"/>
+      <path d="${linha}" fill="none" stroke="${cor}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+      <line id="euro-cursor" x1="0" x2="0" y1="${pad.t}" y2="${H - pad.b}" stroke="var(--muted)" stroke-dasharray="3 3" vector-effect="non-scaling-stroke" visibility="hidden"/>
+    </svg><div class="euro-tip" id="euro-tip" hidden></div>`;
+  $("euro-rodape").innerHTML = `<span>${dataCurta(pts[0][0])}</span><span>mín. ${fmtTaxa(mn)} · máx. ${fmtTaxa(mx)}</span><span>${dataCurta(pts[pts.length - 1][0])}</span>`;
+  const svg = graf.querySelector("svg"), tip = $("euro-tip"), cur = $("euro-cursor");
+  const mover = (e) => {
+    const r = svg.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width * W;
+    let best = 0; pts.forEach((p, i) => { if (Math.abs(X(p[0]) - x) < Math.abs(X(pts[best][0]) - x)) best = i; });
+    const p = pts[best], px = X(p[0]);
+    cur.setAttribute("x1", px); cur.setAttribute("x2", px); cur.setAttribute("visibility", "visible");
+    tip.hidden = false; tip.style.left = Math.min(Math.max(px / W * r.width, 50), r.width - 50) + "px";
+    tip.textContent = `${dataCurta(p[0])} · ${fmtTaxa(p[1])}`;
+  };
+  svg.addEventListener("pointermove", mover); svg.addEventListener("pointerdown", mover);
+  svg.addEventListener("pointerleave", () => { tip.hidden = true; cur.setAttribute("visibility", "hidden"); });
+}
+
 function renderDashboard() {
+  renderEuro();
   const lista = doMes(mesAtual);
   const r = soma(lista, "receita"), d = soma(lista, "despesa");
   $("kpi-receitas").textContent = fmt(r);
@@ -1368,6 +1446,7 @@ $("f-valor").addEventListener("input", atualizarConv);
 $("f-moeda").addEventListener("change", atualizarConv);
 $("btn-cambio").addEventListener("click", () => atualizarCambio(true));
 $("fx-pill").addEventListener("click", () => mostrarView("dados"));
+$("euro-periodos").addEventListener("click", (e) => { const b = e.target.closest("button[data-p]"); if (!b) return; euroPeriodo = Number(b.dataset.p); LS.set("fin_euro_periodo", String(euroPeriodo)); renderEuro(); });
 $("form-cambio").addEventListener("submit", (e) => {
   e.preventDefault();
   const v = Number($("c-valor").value); if (!(v > 0)) return;

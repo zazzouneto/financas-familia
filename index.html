@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=21">
+  <link rel="stylesheet" href="styles.css?v=23">
 </head>
 <body>
 
@@ -68,6 +68,15 @@
           <div class="card-head"><h3>A confirmar</h3><span class="muted small">atrasados e próximos 7 dias</span></div>
           <ul id="dash-confirmar" class="due-list"></ul>
         </div>
+      </div>
+
+      <div class="card euro-card">
+        <div class="card-head"><h3>Euro → Real</h3>
+          <div class="seg-mini" id="euro-periodos"><button data-p="7">Semana</button><button data-p="30" class="on">Mês</button><button data-p="365">Ano</button><button data-p="1826">5 anos</button></div>
+        </div>
+        <div class="euro-topo"><strong id="euro-atual">—</strong><span id="euro-var" class="muted"></span><span id="euro-nota" class="muted small"></span></div>
+        <div id="euro-graf" class="euro-graf"></div>
+        <div id="euro-rodape" class="muted small euro-rodape"></div>
       </div>
 
       <div class="kpis">
@@ -280,6 +289,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=21"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>
