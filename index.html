@@ -8,7 +8,8 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=23">
+  <link rel="stylesheet" href="styles.css?v=24">
+  <script>try{document.documentElement.dataset.tema=localStorage.getItem("fin_tema")||"roxo"}catch(e){document.documentElement.dataset.tema="roxo"}</script>
 </head>
 <body>
 
@@ -206,6 +207,13 @@
 
     <!-- DADOS -->
     <section class="view" id="view-dados" hidden>
+      <div class="card">
+        <div class="card-head"><h3>Aparência</h3></div>
+        <div class="tema-opcoes" id="tema-opcoes">
+          <button data-tema="roxo"><i style="background:#7a1fd6"></i> Roxo claro</button>
+          <button data-tema="escuro"><i style="background:#00e07a"></i> Escuro verde (original)</button>
+        </div>
+      </div>
       <div class="grid-2">
         <div class="card">
           <div class="card-head"><h3>Importar</h3></div>
@@ -289,6 +297,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

@@ -10,6 +10,7 @@ const MESES_CURTOS = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out
 const CORES = ["--c1","--c2","--c3","--c4","--c5","--c6","--c7","--c8"].map(v => `var(${v})`);
 
 const $ = (id) => document.getElementById(id);
+try { if (!document.documentElement.dataset.tema) document.documentElement.dataset.tema = localStorage.getItem("fin_tema") || "roxo"; } catch (e) { document.documentElement.dataset.tema = "roxo"; }
 // Corre como página (artifact) do claude.ai? Aí há window.claude.use e a nuvem sincroniza entre aparelhos.
 const NO_CLAUDE = typeof window.claude === "object" && typeof window.claude?.use === "function";
 const LS = {
@@ -1446,6 +1447,10 @@ $("f-valor").addEventListener("input", atualizarConv);
 $("f-moeda").addEventListener("change", atualizarConv);
 $("btn-cambio").addEventListener("click", () => atualizarCambio(true));
 $("fx-pill").addEventListener("click", () => mostrarView("dados"));
+// Tema (guardado neste aparelho)
+function aplicarTema(t) { document.documentElement.dataset.tema = t; LS.set("fin_tema", t); document.querySelectorAll("#tema-opcoes button").forEach(b => b.classList.toggle("on", b.dataset.tema === t)); try { render(); } catch (e) {} }
+$("tema-opcoes").addEventListener("click", (e) => { const b = e.target.closest("button[data-tema]"); if (b) aplicarTema(b.dataset.tema); });
+document.querySelectorAll("#tema-opcoes button").forEach(b => b.classList.toggle("on", b.dataset.tema === (document.documentElement.dataset.tema || "roxo")));
 $("euro-periodos").addEventListener("click", (e) => { const b = e.target.closest("button[data-p]"); if (!b) return; euroPeriodo = Number(b.dataset.p); LS.set("fin_euro_periodo", String(euroPeriodo)); renderEuro(); });
 $("form-cambio").addEventListener("submit", (e) => {
   e.preventDefault();

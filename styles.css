@@ -340,3 +340,38 @@ details.plano tr.pago td { opacity: .5; }
 .euro-graf svg{width:100%;height:100%;display:block;touch-action:pan-y}
 .euro-tip{position:absolute;top:0;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 8px;font-size:12px;white-space:nowrap;pointer-events:none}
 .euro-rodape{display:flex;justify-content:space-between;margin-top:4px}
+
+/* ===== Tema Roxo (claro, inspirado em bancos digitais; sem logótipos nem marcas de terceiros) ===== */
+:root[data-tema="roxo"] {
+  --bg: #f5f3f8; --surface: #ffffff; --surface-2: #f2ecf9; --border: #e7e0f0;
+  --text: #1f1629; --muted: #6e6680; --brand: #7a1fd6; --brand-2: #9a4cf0;
+  --pos: #0f9d58; --neg: #d93a3f; --warn: #c97a00;
+  --c1: #7a1fd6; --c2: #2d7ff9; --c3: #f0a020; --c4: #b46cf5; --c5: #e0474c; --c6: #13a8c2; --c7: #5bb318; --c8: #e05aa8;
+  --radius: 18px;
+  color-scheme: light;
+}
+:root[data-tema="roxo"] body { background: var(--bg); }
+:root[data-tema="roxo"] .card, :root[data-tema="roxo"] .kpi { border-color: transparent; box-shadow: 0 1px 2px rgba(40,10,70,.05), 0 4px 16px rgba(40,10,70,.06); }
+:root[data-tema="roxo"] .btn-primary, :root[data-tema="roxo"] .chk.on { color: #fff; }
+:root[data-tema="roxo"] .btn-primary { border-radius: 999px; }
+:root[data-tema="roxo"] .brand-mark { color: var(--brand); }
+:root[data-tema="roxo"] .tabs button.active { background: var(--brand); color: #fff; }
+:root[data-tema="roxo"] .tabs button { border-radius: 999px; }
+/* Faixa do saldo em roxo, texto branco */
+:root[data-tema="roxo"] .saldobar { background: linear-gradient(135deg, #6a12c4, #8f3ee8); border: none; color: #fff; box-shadow: 0 8px 24px rgba(106,18,196,.28); }
+:root[data-tema="roxo"] .saldobar .sb-label, :root[data-tema="roxo"] .saldobar .muted, :root[data-tema="roxo"] .saldobar .sb-nota { color: rgba(255,255,255,.78); }
+:root[data-tema="roxo"] .saldobar .sb-valor, :root[data-tema="roxo"] .saldobar .sb-valor.pos, :root[data-tema="roxo"] .saldobar .sb-valor.neg { color: #fff; }
+:root[data-tema="roxo"] .saldobar .sb-valor.neg { text-decoration: underline wavy rgba(255,180,180,.9); text-underline-offset: 4px; }
+:root[data-tema="roxo"] .saldobar .btn-primary { background: #fff; color: #6a12c4; border-color: #fff; }
+:root[data-tema="roxo"] .nuvem-pill { border-color: var(--border); color: var(--muted); }
+:root[data-tema="roxo"] .nuvem-pill.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 35%, transparent); }
+:root[data-tema="roxo"] .nuvem-pill.sync { color: var(--warn); }
+:root[data-tema="roxo"] .seg-mini { background: var(--surface-2); }
+:root[data-tema="roxo"] .seg-mini button.on { background: var(--brand); color: #fff; }
+:root[data-tema="roxo"] .cons-badge.medio { color: #fff; }
+:root[data-tema="roxo"] .aviso-novo { color: #5a3b00; }
+:root[data-tema="roxo"] input, :root[data-tema="roxo"] select, :root[data-tema="roxo"] textarea { background: #fff; color: var(--text); }
+.tema-opcoes { display: flex; gap: 10px; flex-wrap: wrap; }
+.tema-opcoes button { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
+.tema-opcoes button.on { outline: 2px solid var(--brand); }
+.tema-opcoes i { width: 16px; height: 16px; border-radius: 50%; display: inline-block; }
