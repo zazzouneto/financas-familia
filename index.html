@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b0f0d">
-  <link rel="stylesheet" href="styles.css?v=26">
+  <link rel="stylesheet" href="styles.css?v=27">
   <script>try{document.documentElement.dataset.tema=localStorage.getItem("fin_tema")||"roxo"}catch(e){document.documentElement.dataset.tema="roxo"}</script>
 </head>
 <body>
@@ -17,11 +17,13 @@
   <main id="login-section" class="login" hidden>
     <form id="login-form" class="login-card">
       <div class="brand brand-lg"><svg class="zz-logo" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="48" fill="var(--logo-bg,#6a12c4)"/><circle cx="50" cy="50" r="48" fill="var(--logo-bg2,#8f3ee8)" opacity=".55" clip-path="inset(0 0 50% 0)"/><circle cx="50" cy="50" r="43.5" fill="none" stroke="#fff" stroke-width="1.6" opacity=".45"/><path d="M20 37 L24 30 Q46 26 70 27 L72 34 Q46 33 24 39 Z" fill="#fff"/><path d="M15 37 L24 37 L21 33 Z" fill="#e6d4ff"/><path d="M70 30 L76 34 L39 70 L29 70 Z" fill="#fff"/><path d="M29 70 Q52 67 79 68 L74 75 Q50 75 25 76 Z" fill="#fff"/><circle cx="75" cy="28" r="6" fill="#fff"/><circle cx="76" cy="27" r="1.5" fill="#4b0c8f"/><path d="M80 26 L88 29 L80 31 Z" fill="#e6d4ff"/><path d="M27 35.5 Q46 32 63 31.5" stroke="#c9a6f5" stroke-width="1.1" fill="none"/><path d="M36 72.5 Q54 70.5 72 71" stroke="#c9a6f5" stroke-width="1.1" fill="none"/></svg><span>Zazzou's <b class="brand-fin">Finance</b></span></div>
-      <p class="muted">Controlo financeiro da família</p>
-      <input type="text" id="login-username" placeholder="Utilizador" autocomplete="username" required>
+      <p class="muted" id="login-sub">Controlo financeiro da família</p>
+      <input type="text" id="login-username" value="Neto" autocomplete="username" hidden>
       <input type="password" id="login-password" placeholder="Senha" autocomplete="current-password" required>
-      <button type="submit" class="btn btn-primary">Entrar</button>
+      <input type="password" id="login-password2" placeholder="Repita a senha" autocomplete="new-password" hidden>
+      <button type="submit" class="btn btn-primary" id="login-btn">Entrar</button>
       <p id="login-msg" class="login-msg"></p>
+      <p class="muted small" id="login-ajuda">Esqueceu a senha? Peça ao Claude para a repor.</p>
     </form>
   </main>
 
@@ -37,7 +39,7 @@
         <button data-view="dados">Dados</button>
       </nav>
       <span id="nuvem-pill" class="nuvem-pill" hidden></span>
-      <button id="btn-logout" class="btn btn-ghost btn-sm">Sair</button>
+      <button id="btn-logout" class="btn btn-ghost btn-sm" title="Bloquear o app">🔒 Sair</button>
     </header>
     <div class="saldobar">
       <div class="sb-item">
@@ -49,6 +51,7 @@
         <strong id="sb-previsto" class="sb-valor sb-sec">—</strong>
       </div>
       <small class="muted sb-nota" id="saldo-real-nota">Ainda não definido.</small>
+      <button class="olho-btn" id="btn-privado" type="button" title="Ocultar valores" aria-label="Ocultar valores"></button>
       <button class="btn btn-sm btn-primary" id="btn-saldo-real">Atualizar<span class="hide-sm"> saldo</span></button>
     </div>
     </div>
@@ -251,12 +254,13 @@
         </div>
         <div class="card">
           <div class="card-head"><h3>Acesso</h3></div>
+          <p class="muted small">A senha é pedida sempre que abre o app e depois de 10 minutos fora dele. É a mesma no telemóvel e no computador.</p>
           <form id="form-senha" class="inline-form">
-            <input type="text" id="u-nome" placeholder="Utilizador" autocomplete="username" required>
-            <input type="password" id="u-senha" placeholder="Nova senha" autocomplete="new-password" required>
-            <button class="btn" type="submit">Alterar</button>
+            <input type="text" id="u-nome" value="Neto" autocomplete="username" hidden>
+            <input type="password" id="u-senha-atual" placeholder="Senha atual" autocomplete="current-password" required>
+            <input type="password" id="u-senha" placeholder="Nova senha (mín. 4)" autocomplete="new-password" minlength="4" required>
+            <button class="btn" type="submit">Alterar senha</button>
           </form>
-          <p class="muted small">O login protege apenas o ecrã deste aparelho; não é encriptação.</p>
           <button class="btn btn-danger" id="btn-apagar-tudo">Apagar todos os dados</button>
         </div>
       </div>
@@ -297,6 +301,6 @@
     </form>
   </div>
   <div id="toast" class="toast" hidden></div>
-  <script src="app.js?v=26"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>

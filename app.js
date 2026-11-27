@@ -127,16 +127,18 @@ async function iniciarNuvem() {
   db.doc("fin/meta").onSnapshot(async (snap) => {
     if (snap.metadata && snap.metadata.hasPendingWrites) return;
     clearTimeout(timer);
+    const primeira = !nuvemVerificada;
+    const fim = () => { if (primeira) { nuvemVerificada = true; atualizarLogin(); } };
     if (!snap.exists) {
-      nuvem.pronta = true;
+      nuvem.pronta = true; fim();
       if (state.transacoes.length || state.metas.length) { setNuvem("sync", "☁️ a enviar…"); await enviarNuvem(true); }
       else setNuvem("ok", "☁️ nuvem vazia — importe os dados");
       return;
     }
     const meta = snap.data();
-    if (meta.rev && meta.rev === nuvem.rev) { nuvem.pronta = true; setNuvem("ok", "☁️ sincronizado"); return; }
-    await carregarDaNuvem(meta);
-  }, (err) => { clearTimeout(timer); setNuvem("off", "⚠️ nuvem indisponível"); console.warn("nuvem", err); });
+    if (meta.rev && meta.rev === nuvem.rev) { nuvem.pronta = true; setNuvem("ok", "☁️ sincronizado"); fim(); return; }
+    await carregarDaNuvem(meta); fim();
+  }, (err) => { clearTimeout(timer); setNuvem("off", "⚠️ nuvem indisponível"); console.warn("nuvem", err); nuvemVerificada = true; atualizarLogin(); });
   db.doc("fin/cambio-hist").onSnapshot((snap) => {
     if (!snap.exists) return;
     try { juntarHist(lerHist(snap.data())); renderEuro(); } catch (e) { registarErro("hist-snap", e); }
@@ -1267,7 +1269,6 @@ function renderDados() {
   $("backup-info").textContent = ub ? `Última cópia: ${dataCurta(ub)}` : "Ainda sem cópias de segurança.";
   const c = state.config.cambio || {};
   $("cambio-info").innerHTML = `<strong style="font-size:20px">1 € = ${fmtTaxa(cambio())}</strong> <span class="muted small">${c.data ? `${esc(c.fonte || "manual")} · ${esc(c.data)}` : "valor da planilha (ainda não atualizado)"}</span>`;
-  $("u-nome").value = (JSON.parse(LS.get(USER_KEY) || "{}").username) || "";
 }
 
 /* ---------- Agenda (.ics) ---------- */
@@ -1369,21 +1370,94 @@ function render() {
 }
 
 /* ---------- Login ---------- */
-if (!LS.get(USER_KEY)) LS.set(USER_KEY, JSON.stringify({ username: "admin", password: "1234" }));
+
 function mostrarApp() { $("login-section").hidden = true; $("app-section").hidden = false; $("cons-fab").hidden = false; limparForm(); irParaInicio(); }
 function irParaInicio() { viewAtual = "dashboard"; mesAtual = mesDe(hojeISO()); mostrarView("dashboard"); window.scrollTo({ top: 0 }); }
 function mostrarLogin() { $("login-section").hidden = false; $("app-section").hidden = true; $("cons-fab").hidden = true; }
 
-$("login-form").addEventListener("submit", (e) => {
+/* ---------- Senha de acesso (pedida sempre ao abrir) ----------
+   Guarda só um "hash" PBKDF2 da senha em config.acesso (sincroniza com a nuvem: mesma senha em todos os aparelhos). */
+let desbloqueado = false, nuvemVerificada = !NO_CLAUDE;
+async function hashSenha(senha, salt) {
+  const enc = new TextEncoder();
+  const chave = await crypto.subtle.importKey("raw", enc.encode(senha), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: enc.encode(salt), iterations: 150000 }, chave, 256);
+  return [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+const temSenha = () => !!(state.config.acesso && state.config.acesso.hash);
+function atualizarLogin() {
+  if (desbloqueado) return;
+  const criar = !temSenha();
+  const espera = criar && !nuvemVerificada;
+  $("login-password2").hidden = !criar; $("login-password2").required = criar;
+  $("login-password").autocomplete = criar ? "new-password" : "current-password";
+  $("login-password").placeholder = criar ? "Crie uma senha (mín. 4)" : "Senha";
+  $("login-sub").textContent = espera ? "A verificar…" : criar ? "Primeiro acesso: crie a senha do app." : "Controlo financeiro da família";
+  $("login-btn").textContent = criar ? "Criar senha e entrar" : "Entrar";
+  $("login-btn").disabled = espera;
+  $("login-ajuda").hidden = criar;
+}
+function bloquear() {
+  desbloqueado = false; fecharModal && !$("modal").hidden && fecharModal();
+  $("login-password").value = ""; $("login-password2").value = ""; $("login-msg").textContent = "";
+  mostrarLogin(); atualizarLogin();
+  setTimeout(() => { try { $("login-password").focus(); } catch (e) {} }, 50);
+}
+$("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const u = JSON.parse(LS.get(USER_KEY) || "{}");
-  if ($("login-username").value.trim() === u.username && $("login-password").value === u.password) {
-    LS.set(SESSION_KEY, "true"); $("login-msg").textContent = ""; mostrarApp();
+  const msg = (t) => { $("login-msg").textContent = t; $("login-msg").style.color = "var(--neg)"; };
+  const senha = $("login-password").value;
+  if (!temSenha()) {
+    if (!nuvemVerificada) return;
+    if (senha.length < 4) return msg("A senha precisa de pelo menos 4 caracteres.");
+    if (senha !== $("login-password2").value) return msg("As duas senhas não são iguais.");
+    const salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    state.config.acesso = { salt, hash: await hashSenha(senha, salt), criadaEm: new Date().toISOString() };
+    salvar();
   } else {
-    $("login-msg").textContent = "Utilizador ou senha inválidos."; $("login-msg").style.color = "var(--neg)";
+    const a = state.config.acesso;
+    if (await hashSenha(senha, a.salt) !== a.hash) { $("login-password").value = ""; return msg("Senha incorreta."); }
   }
+  desbloqueado = true; $("login-msg").textContent = ""; $("login-password").value = ""; $("login-password2").value = "";
+  mostrarApp();
 });
-$("btn-logout").addEventListener("click", () => { LS.set(SESSION_KEY, "false"); mostrarLogin(); });
+$("btn-logout").addEventListener("click", () => bloquear());
+
+/* ---------- Ocultar valores (borrar) ---------- */
+// Marca cada valor em € ou R$ do ecrã com <span class="money">; com o modo privado ligado ficam borrados.
+const RE_VALOR = /(?:[+\-−]\s?)?(?:R\$\s?\d[\d.]*(?:,\d+)?|\d[\d.]*(?:,\d{1,2})?\s?€|€\s?\d[\d.]*(?:,\d{1,2})?)/g;
+const SALTAR = ".money,script,style,svg,input,textarea,select,option,.euro-card,#fx-pill,#modal,#login-section";
+function marcarValores(raiz) {
+  const w = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT, { acceptNode: (n) => {
+    if (!n.nodeValue || !/\d/.test(n.nodeValue) || !/[€$]/.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
+    return n.parentElement && n.parentElement.closest(SALTAR) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+  } });
+  const nos = []; while (w.nextNode()) nos.push(w.currentNode);
+  for (const n of nos) {
+    const t = n.nodeValue; RE_VALOR.lastIndex = 0; if (!RE_VALOR.test(t)) continue; RE_VALOR.lastIndex = 0;
+    const frag = document.createDocumentFragment(); let i = 0, m;
+    while ((m = RE_VALOR.exec(t))) {
+      if (m.index > i) frag.appendChild(document.createTextNode(t.slice(i, m.index)));
+      const sp = document.createElement("span"); sp.className = "money"; sp.textContent = m[0]; frag.appendChild(sp); i = m.index + m[0].length;
+    }
+    if (i < t.length) frag.appendChild(document.createTextNode(t.slice(i)));
+    n.parentNode.replaceChild(frag, n);
+  }
+}
+let marcarPendente = false;
+new MutationObserver(() => {
+  if (marcarPendente) return; marcarPendente = true;
+  requestAnimationFrame(() => { marcarPendente = false; marcarValores($("app-section")); marcarValores($("cons-fab")); });
+}).observe(document.body, { childList: true, subtree: true, characterData: true });
+const OLHO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const OLHO_FECHADO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+function aplicarPrivado(on) {
+  document.documentElement.classList.toggle("privado", on); LS.set("fin_privado", on ? "1" : "0");
+  const b = $("btn-privado"); b.innerHTML = on ? OLHO_FECHADO : OLHO;
+  b.title = on ? "Mostrar valores" : "Ocultar valores"; b.setAttribute("aria-label", b.title); b.setAttribute("aria-pressed", on ? "true" : "false");
+}
+$("btn-privado").addEventListener("click", () => aplicarPrivado(!document.documentElement.classList.contains("privado")));
+aplicarPrivado(LS.get("fin_privado") === "1");
 
 /* ---------- Eventos ---------- */
 $("tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) mostrarView(b.dataset.view); });
@@ -1499,10 +1573,14 @@ $("modal-form").addEventListener("submit", okModal);
 $("modal-ok").addEventListener("click", okModal);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("modal").hidden) fecharModal(); });
 $("btn-export-csv").addEventListener("click", exportarCSV);
-$("form-senha").addEventListener("submit", (e) => {
+$("form-senha").addEventListener("submit", async (e) => {
   e.preventDefault();
-  LS.set(USER_KEY, JSON.stringify({ username: $("u-nome").value.trim(), password: $("u-senha").value }));
-  $("u-senha").value = ""; toast("Utilizador e senha alterados.");
+  const a = state.config.acesso;
+  if (a && a.hash && await hashSenha($("u-senha-atual").value, a.salt) !== a.hash) { toast("A senha atual não está certa."); return; }
+  const nova = $("u-senha").value; if (nova.length < 4) { toast("A nova senha precisa de pelo menos 4 caracteres."); return; }
+  const salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  state.config.acesso = { salt, hash: await hashSenha(nova, salt), criadaEm: new Date().toISOString() };
+  salvar(); $("u-senha").value = ""; $("u-senha-atual").value = ""; toast("Senha alterada em todos os aparelhos.");
 });
 $("btn-apagar-tudo").addEventListener("click", async () => {
   if (!await perguntar("Apagar TODOS os lançamentos e metas? Exporte uma cópia antes.", "Apagar tudo")) return;
@@ -1513,7 +1591,8 @@ $("btn-apagar-tudo").addEventListener("click", async () => {
 if (!NO_CLAUDE && "serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js").catch(console.error));
 }
-(NO_CLAUDE || LS.get(SESSION_KEY) === "true") ? mostrarApp() : mostrarLogin();
+bloquear();
+if (NO_CLAUDE) setTimeout(() => { if (!nuvemVerificada) { nuvemVerificada = true; atualizarLogin(); } }, 8000);
 // No claude.ai a página corre numa moldura que bloqueia o envio nativo de formulários:
 // o clique em "Pago ✓", "Adicionar", etc. não fazia nada. Aqui o próprio app trata o clique e o Enter.
 function enviarForm(form) {
@@ -1534,7 +1613,7 @@ if (NO_CLAUDE) {
     e.preventDefault(); enviarForm(form);
   }, true);
 }
-if (NO_CLAUDE) { $("btn-logout").hidden = true; iniciarNuvem(); }
+if (NO_CLAUDE) { iniciarNuvem(); }
 else {
   // Versão antiga (GitHub Pages): aviso para passar para o link com nuvem.
   const av = document.createElement("div"); av.className = "aviso-novo";
@@ -1545,7 +1624,7 @@ else {
 let escondidoDesde = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) escondidoDesde = Date.now();
-  else if (escondidoDesde && Date.now() - escondidoDesde > 10 * 60 * 1000 && !$("app-section").hidden) irParaInicio();
+  else if (escondidoDesde && Date.now() - escondidoDesde > 10 * 60 * 1000 && desbloqueado) bloquear();
 });
-window.addEventListener("pageshow", (e) => { if (e.persisted && !$("app-section").hidden) irParaInicio(); });
+window.addEventListener("pageshow", (e) => { if (e.persisted && desbloqueado) bloquear(); });
 if (!String(state.config.cambio?.data || "").startsWith(hojeISO()) && state.config.cambio?.fonte !== "manual") atualizarCambio(false);
