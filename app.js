@@ -1395,7 +1395,6 @@ function atualizarLogin() {
   $("login-sub").textContent = espera ? "A verificar…" : criar ? "Primeiro acesso: crie a senha do app." : "Controlo financeiro da família";
   $("login-btn").textContent = criar ? "Criar senha e entrar" : "Entrar";
   $("login-btn").disabled = espera;
-  $("login-ajuda").hidden = criar;
 }
 function bloquear() {
   desbloqueado = false; fecharModal && !$("modal").hidden && fecharModal();
