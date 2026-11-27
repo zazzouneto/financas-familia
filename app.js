@@ -1425,7 +1425,7 @@ $("btn-logout").addEventListener("click", () => bloquear());
 /* ---------- Ocultar valores (borrar) ---------- */
 // Marca cada valor em € ou R$ do ecrã com <span class="money">; com o modo privado ligado ficam borrados.
 const RE_VALOR = /(?:[+\-−]\s?)?(?:R\$\s?\d[\d.]*(?:,\d+)?|\d[\d.]*(?:,\d{1,2})?\s?€|€\s?\d[\d.]*(?:,\d{1,2})?)/g;
-const SALTAR = ".money,script,style,svg,input,textarea,select,option,.euro-card,#fx-pill,#modal,#login-section";
+const SALTAR = ".vz,script,style,svg,input,textarea,select,option,.euro-card,#fx-pill,#modal,#login-section";
 function marcarValores(raiz) {
   const w = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT, { acceptNode: (n) => {
     if (!n.nodeValue || !/\d/.test(n.nodeValue) || !/[€$]/.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
@@ -1437,7 +1437,7 @@ function marcarValores(raiz) {
     const frag = document.createDocumentFragment(); let i = 0, m;
     while ((m = RE_VALOR.exec(t))) {
       if (m.index > i) frag.appendChild(document.createTextNode(t.slice(i, m.index)));
-      const sp = document.createElement("span"); sp.className = "money"; sp.textContent = m[0]; frag.appendChild(sp); i = m.index + m[0].length;
+      const sp = document.createElement("z-v"); sp.className = "vz"; sp.textContent = m[0]; frag.appendChild(sp); i = m.index + m[0].length;
     }
     if (i < t.length) frag.appendChild(document.createTextNode(t.slice(i)));
     n.parentNode.replaceChild(frag, n);
